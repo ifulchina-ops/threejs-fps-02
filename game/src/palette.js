@@ -1,24 +1,25 @@
-// EMBERLINE — the look plan, in one place. A dusk industrial yard: cold slate surfaces,
-// warm amber light, rust-orange containers, teal accents. The same names are the CSS
-// custom properties in index.html, so the 3D scene and the HUD share one palette.
+// SOLSTICE — Array Nine: the palette. A desert solar station at golden hour:
+// warm sand and amber sun against deep solar-panel blue, with the two teams in
+// amber (HELIOS, attackers) and teal (UMBRA, defenders). One table, so the map,
+// the bots and the HUD can never drift apart.
 export const PALETTE = {
-  canvas: '#191d26',
-  sky: '#2b3849',
-  surface: '#262c38',
-  hairline: '#39404e',
-  ink: '#ece7db',
-  muted: '#9aa3b0',
-  accent: '#f0a830',
-  ember: '#e2603a',
-  vanguard: '#4f8fd0',
-  teal: '#3fa7a0',
-  rust: '#a85a2e',
-  concrete: '#2b2f38',
-  ground: '#20242c',
-  relay: '#57d7e8',
+  sky: '#e8a35c',
+  fog: '#df9c52',
+  ground: '#8a7a5e',
+  sand: '#a08a64',
+  concrete: '#6e6a60',
+  surface: '#2a2620',
+  hairline: '#4a4234',
+  panel: '#1d3a5f',
+  panelEdge: '#8fa8c8',
+  steel: '#7d838c',
+  rust: '#9a5a34',
+  accent: '#ffb020',
+  helios: '#ff9a2e',
+  umbra: '#2ed3c6',
+  charge: '#ff5252',
+  ink: '#f5efe2',
+  muted: '#b8ad97',
   danger: '#e5484d',
+  ok: '#7dd87d',
 };
-
-export function shade(name) {
-  return PALETTE[name];
-}

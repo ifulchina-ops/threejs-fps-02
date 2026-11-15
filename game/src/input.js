@@ -1,59 +1,67 @@
-// EMBERLINE — keyboard and mouse, and the pointer lock that turns the mouse into
-// look. Plain browser APIs only. Right mouse aims down sights; B opens the buy menu;
-// number keys buy during the buy phase; Enter deploys early.
-export function createInput(canvas, onLockChange) {
+// SOLSTICE — keyboard and mouse: pointer lock, look deltas, fire / aim state,
+// and the interact key (E) the plant/defuse objective uses. One module, so the
+// game loop never touches DOM events directly.
+export function createInput(element, onLockChange) {
   const keys = new Set();
-  const state = { keys, locked: false, firing: false, aiming: false, lookX: 0, lookY: 0 };
+  const state = { keys, aiming: false, firing: false, interact: false };
+  let lookX = 0;
+  let lookY = 0;
 
-  function setKey(event, down) {
-    if (down) keys.add(event.code);
-    else keys.delete(event.code);
-    if (event.code === 'Space') event.preventDefault();
+  function locked() {
+    return document.pointerLockElement === element;
   }
 
-  window.addEventListener('keydown', (event) => setKey(event, true));
-  window.addEventListener('keyup', (event) => setKey(event, false));
+  document.addEventListener('mousemove', (event) => {
+    if (!locked()) return;
+    lookX += event.movementX || 0;
+    lookY += event.movementY || 0;
+  });
+  document.addEventListener('mousedown', (event) => {
+    if (!locked()) return;
+    if (event.button === 0) state.firing = true;
+    if (event.button === 2) state.aiming = true;
+  });
+  document.addEventListener('mouseup', (event) => {
+    if (event.button === 0) state.firing = false;
+    if (event.button === 2) state.aiming = false;
+  });
+  document.addEventListener('contextmenu', (event) => {
+    if (locked()) event.preventDefault();
+  });
+  window.addEventListener('keydown', (event) => {
+    keys.add(event.code);
+    if (event.code === 'KeyE') state.interact = true;
+    if (event.code === 'Space') event.preventDefault();
+  });
+  window.addEventListener('keyup', (event) => {
+    keys.delete(event.code);
+    if (event.code === 'KeyE') state.interact = false;
+  });
   window.addEventListener('blur', () => {
     keys.clear();
     state.firing = false;
     state.aiming = false;
+    state.interact = false;
   });
-  window.addEventListener('mousemove', (event) => {
-    if (!state.locked) return;
-    state.lookX += event.movementX;
-    state.lookY += event.movementY;
-  });
-  window.addEventListener('mousedown', (event) => {
-    if (!state.locked) return;
-    if (event.button === 0) state.firing = true;
-    if (event.button === 2) state.aiming = true;
-  });
-  window.addEventListener('mouseup', (event) => {
-    if (event.button === 0) state.firing = false;
-    if (event.button === 2) state.aiming = false;
-  });
-  window.addEventListener('contextmenu', (event) => event.preventDefault());
   document.addEventListener('pointerlockchange', () => {
-    state.locked = document.pointerLockElement === canvas;
-    if (!state.locked) {
-      keys.clear();
+    if (!locked()) {
       state.firing = false;
       state.aiming = false;
     }
-    onLockChange(state.locked);
+    onLockChange(locked());
   });
 
   return {
     state,
-    requestLock() {
-      canvas.requestPointerLock();
-    },
     takeLook() {
-      const x = state.lookX;
-      const y = state.lookY;
-      state.lookX = 0;
-      state.lookY = 0;
-      return { x, y };
+      const out = { x: lookX, y: lookY };
+      lookX = 0;
+      lookY = 0;
+      return out;
     },
+    requestLock() {
+      if (!locked()) element.requestPointerLock();
+    },
+    isLocked: locked,
   };
 }

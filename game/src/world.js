@@ -1,49 +1,91 @@
-// EMBERLINE — the map: "Foundry Yard", an original dusk industrial yard, 44 x 36 m.
-// Two spawn ends (Vanguard south, Ember north), a raised Relay platform at mid, two
-// lanes split by container stacks, crates and pillars for cover. Every box is a collider
-// for players and bots and a surface a bullet stops on. Plain geometry plus one
-// procedural canvas texture for the ground — no models, no image files, no network.
+// SOLSTICE — the map: "Array Nine", an original desert solar station at golden
+// hour, 48 x 40 m. HELIOS spawns south, UMBRA north. Two bombsites: A "Reactor"
+// (the control building, west) and B "Array" (the panel field, east), joined by
+// west, mid and east lanes. Every box is a collider and a surface a bullet stops
+// on. The waypoint graph drives the bots' team plans. Plain geometry plus
+// procedural canvas textures — no models, no image files, no network.
 import * as THREE from 'three';
 import { PALETTE } from './palette.js';
 
 const WALL_HEIGHT = 5;
 
+// Named waypoints the bots' team plans walk. Routes are lists of these keys.
+export const WAYPOINTS = {
+  heliosSpawn: [0, 17],
+  heliosWest: [-10, 14], heliosEast: [10, 14], heliosMid: [0, 12],
+  westMid: [-19, 6], westMid2: [-19, -2],
+  eastMid: [19, 6], eastMid2: [19, -2],
+  midSouth: [0, 8], mid: [0, 0], midNorth: [0, -6],
+  aEntry: [-14, -4], aSite: [-14, -11], aBack: [-20, -13], aPost1: [-10, -14], aPost2: [-18, -7],
+  bEntry: [14, -4], bSite: [14, -11], bBack: [20, -13], bPost1: [10, -14], bPost2: [18, -7],
+  umbraSpawn: [0, -17], umbraWest: [-8, -15], umbraEast: [8, -15],
+};
+
 function groundTexture() {
   const canvas = document.createElement('canvas');
-  canvas.width = 512;
-  canvas.height = 512;
+  canvas.width = 1024;
+  canvas.height = 1024;
   const ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#22262e';
-  ctx.fillRect(0, 0, 512, 512);
-  // Concrete slabs.
-  ctx.strokeStyle = 'rgba(255,255,255,0.05)';
-  ctx.lineWidth = 2;
-  for (let i = 0; i <= 8; i += 1) {
-    ctx.beginPath(); ctx.moveTo(i * 64, 0); ctx.lineTo(i * 64, 512); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(0, i * 64); ctx.lineTo(512, i * 64); ctx.stroke();
-  }
-  // Wear: faint blotches.
-  for (let i = 0; i < 260; i += 1) {
-    const shade = Math.random() * 0.05;
-    ctx.fillStyle = `rgba(0,0,0,${shade})`;
+  // Sandy concrete.
+  ctx.fillStyle = '#8a7a5e';
+  ctx.fillRect(0, 0, 1024, 1024);
+  for (let i = 0; i < 900; i += 1) {
+    const shade = Math.random() * 0.09;
+    ctx.fillStyle = Math.random() < 0.5 ? `rgba(0,0,0,${shade})` : `rgba(255,240,200,${shade})`;
     ctx.beginPath();
-    ctx.arc(Math.random() * 512, Math.random() * 512, 4 + Math.random() * 26, 0, Math.PI * 2);
+    ctx.arc(Math.random() * 1024, Math.random() * 1024, 3 + Math.random() * 30, 0, Math.PI * 2);
     ctx.fill();
   }
-  // Painted mid line and hazard ring around the relay.
-  ctx.strokeStyle = 'rgba(240,168,48,0.55)';
-  ctx.lineWidth = 5;
-  ctx.setLineDash([26, 18]);
-  ctx.beginPath(); ctx.moveTo(256, 0); ctx.lineTo(256, 512); ctx.stroke();
-  ctx.setLineDash([14, 10]);
-  ctx.strokeStyle = 'rgba(87,215,232,0.5)';
+  // Slab seams.
+  ctx.strokeStyle = 'rgba(60,50,35,0.35)';
+  ctx.lineWidth = 2;
+  for (let i = 0; i <= 8; i += 1) {
+    ctx.beginPath(); ctx.moveTo(i * 128, 0); ctx.lineTo(i * 128, 1024); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, i * 128); ctx.lineTo(1024, i * 128); ctx.stroke();
+  }
+  // Site rings: A is west (left), B is east (right). Map x -24..24 -> 0..1024,
+  // z -20..20 -> 0..1024 (texture v runs south-to-north here).
+  const toPx = (x, z) => [(x + 24) / 48 * 1024, (z + 20) / 40 * 1024];
+  for (const [site, color] of [['A', 'rgba(255,154,46,0.75)'], ['B', 'rgba(46,211,198,0.75)']]) {
+    const [cx, cy] = toPx(site === 'A' ? -14 : 14, -11);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 6;
+    ctx.setLineDash([22, 14]);
+    ctx.beginPath(); ctx.arc(cx, cy, 85, 0, Math.PI * 2); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = color;
+    ctx.font = 'bold 64px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(site, cx, cy);
+  }
+  // Centre line, dashed amber.
+  ctx.strokeStyle = 'rgba(255,176,32,0.4)';
   ctx.lineWidth = 4;
-  ctx.beginPath(); ctx.arc(256, 256, 52, 0, Math.PI * 2); ctx.stroke();
+  ctx.setLineDash([30, 20]);
+  ctx.beginPath(); ctx.moveTo(512, 0); ctx.lineTo(512, 1024); ctx.stroke();
   const texture = new THREE.CanvasTexture(canvas);
-  texture.wrapS = THREE.RepeatWrapping;
-  texture.wrapT = THREE.RepeatWrapping;
-  texture.repeat.set(3, 3);
   texture.anisotropy = 4;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+function letterTexture(letter, color) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 128;
+  canvas.height = 128;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = 'rgba(20,18,14,0.85)';
+  ctx.fillRect(0, 0, 128, 128);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 6;
+  ctx.strokeRect(6, 6, 116, 116);
+  ctx.fillStyle = color;
+  ctx.font = 'bold 84px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(letter, 64, 70);
+  const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   return texture;
 }
@@ -56,92 +98,122 @@ export function createWorld(scene) {
   for (const name of Object.keys(PALETTE)) {
     materials[name] = new THREE.MeshStandardMaterial({
       color: new THREE.Color(PALETTE[name]),
-      roughness: name === 'accent' || name === 'relay' ? 0.5 : 0.9,
-      metalness: name === 'rust' || name === 'teal' ? 0.35 : 0.05,
-      emissive: name === 'relay' ? new THREE.Color(PALETTE.relay) : new THREE.Color('#000000'),
-      emissiveIntensity: name === 'relay' ? 0.55 : 0,
+      roughness: name === 'panel' ? 0.35 : name === 'accent' ? 0.5 : 0.9,
+      metalness: name === 'panel' ? 0.6 : name === 'steel' ? 0.5 : 0.05,
+      emissive: name === 'charge' ? new THREE.Color(PALETTE.charge) : new THREE.Color('#000000'),
+      emissiveIntensity: name === 'charge' ? 0.4 : 0,
     });
   }
-  const groundMat = new THREE.MeshStandardMaterial({
-    map: groundTexture(),
-    roughness: 0.95,
-    metalness: 0.02,
-  });
+  const groundMat = new THREE.MeshStandardMaterial({ map: groundTexture(), roughness: 0.95, metalness: 0.02 });
 
   const colliders = [];
   const shootables = [];
 
-  function box(width, height, depth, x, y, z, material) {
+  function box(width, height, depth, x, y, z, material, collider = true) {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), materials[material]);
     mesh.position.set(x, y, z);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     group.add(mesh);
-    colliders.push(new THREE.Box3().setFromObject(mesh));
+    if (collider) colliders.push(new THREE.Box3().setFromObject(mesh));
     shootables.push(mesh);
     return mesh;
   }
 
-  // Floor and perimeter walls (44 x 36 m, open to the dusk sky).
-  const floor = new THREE.Mesh(new THREE.BoxGeometry(44.4, 0.4, 36.4), groundMat);
+  // Floor and perimeter walls (48 x 40 m, open to the golden sky).
+  const floor = new THREE.Mesh(new THREE.BoxGeometry(48.4, 0.4, 40.4), groundMat);
   floor.position.set(0, -0.2, 0);
   floor.receiveShadow = true;
   group.add(floor);
   colliders.push(new THREE.Box3().setFromObject(floor));
   shootables.push(floor);
-  box(0.6, WALL_HEIGHT, 36.4, -22.2, WALL_HEIGHT / 2, 0, 'surface');
-  box(0.6, WALL_HEIGHT, 36.4, 22.2, WALL_HEIGHT / 2, 0, 'surface');
-  box(44.4, WALL_HEIGHT, 0.6, 0, WALL_HEIGHT / 2, -18.2, 'surface');
-  box(44.4, WALL_HEIGHT, 0.6, 0, WALL_HEIGHT / 2, 18.2, 'surface');
+  box(0.6, WALL_HEIGHT, 40.4, -24.2, WALL_HEIGHT / 2, 0, 'concrete');
+  box(0.6, WALL_HEIGHT, 40.4, 24.2, WALL_HEIGHT / 2, 0, 'concrete');
+  box(48.4, WALL_HEIGHT, 0.6, 0, WALL_HEIGHT / 2, -20.2, 'concrete');
+  box(48.4, WALL_HEIGHT, 0.6, 0, WALL_HEIGHT / 2, 20.2, 'concrete');
 
-  // The Relay: a raised platform at mid with a console, antenna and beacon light.
-  box(7, 0.5, 7, 0, 0.25, 0, 'hairline');
-  const consoleMesh = box(1.1, 1.5, 0.7, 0, 1.25, -1.2, 'relay');
-  const screen = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.9, 0.6),
-    new THREE.MeshBasicMaterial({ color: new THREE.Color('#bff3ff') }),
-  );
-  screen.position.set(0, 1.55, -0.83);
-  screen.rotation.x = -0.25;
-  group.add(screen);
-  const antenna = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.04, 0.06, 2.6, 8),
-    materials.hairline,
-  );
-  antenna.position.set(0.9, 2.1, -1.2);
-  group.add(antenna);
-  const beacon = new THREE.Mesh(
-    new THREE.SphereGeometry(0.14, 12, 10),
-    new THREE.MeshBasicMaterial({ color: new THREE.Color(PALETTE.relay) }),
-  );
-  beacon.position.set(0.9, 3.45, -1.2);
-  group.add(beacon);
-  const beaconLight = new THREE.PointLight(new THREE.Color(PALETTE.relay), 6, 12);
-  beaconLight.position.set(0, 3.4, 0);
-  scene.add(beaconLight);
+  // ---- Site A "Reactor": control building + dome + cooling tower ----
+  box(8, 3.6, 5, -17.5, 1.8, -14.5, 'concrete');
+  const windowMat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#ffd27a'), emissive: new THREE.Color('#ff9a2e'), emissiveIntensity: 0.9 });
+  const windows = new THREE.Mesh(new THREE.BoxGeometry(7.4, 0.9, 0.1), windowMat);
+  windows.position.set(-17.5, 2.5, -11.95);
+  group.add(windows);
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(2.6, 24, 16, 0, Math.PI * 2, 0, Math.PI / 2), materials.steel);
+  dome.position.set(-10.5, 0, -14.5);
+  dome.castShadow = true;
+  dome.receiveShadow = true;
+  group.add(dome);
+  colliders.push(new THREE.Box3().setFromObject(dome));
+  shootables.push(dome);
+  const tower = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 2.4, 7, 20), materials.concrete);
+  tower.position.set(-21.5, 3.5, -17.5);
+  tower.castShadow = true;
+  group.add(tower);
+  colliders.push(new THREE.Box3().setFromObject(tower));
+  shootables.push(tower);
 
-  // Container stacks: A lane (west) and B lane (east), each a two-high stack plus singles.
-  box(6, 2.6, 2.6, -13, 1.3, -7, 'rust');
-  box(6, 2.6, 2.6, -13, 3.9, -7, 'teal');
-  box(6, 2.6, 2.6, -13, 1.3, 7, 'teal');
-  box(6, 2.6, 2.6, 13, 1.3, -7, 'teal');
-  box(6, 2.6, 2.6, 13, 3.9, -7, 'rust');
-  box(6, 2.6, 2.6, 13, 1.3, 7, 'rust');
-  // Mid crates and pillars — the cover that makes mid fights work.
-  box(1.6, 1.1, 1.6, -5.2, 0.55, -3.4, 'rust');
-  box(1.6, 1.1, 1.6, 5.2, 0.55, -3.4, 'rust');
-  box(1.6, 1.1, 1.6, -5.2, 0.55, 4.2, 'teal');
-  box(1.6, 1.1, 1.6, 5.2, 0.55, 4.2, 'teal');
-  box(1.2, 3.4, 1.2, -8.6, 1.7, 0, 'hairline');
-  box(1.2, 3.4, 1.2, 8.6, 1.7, 0, 'hairline');
-  box(3.4, 1.0, 1.2, 0, 0.5, -8.6, 'hairline');
-  box(3.4, 1.0, 1.2, 0, 0.5, 8.6, 'hairline');
-  // Spawn cover: low walls and barrels at each end.
-  box(4.2, 1.0, 1.0, -8, 0.5, 14.6, 'surface');
-  box(4.2, 1.0, 1.0, 8, 0.5, 14.6, 'surface');
-  box(4.2, 1.0, 1.0, -8, 0.5, -14.6, 'surface');
-  box(4.2, 1.0, 1.0, 8, 0.5, -14.6, 'surface');
-  for (const [x, z] of [[-16.5, 12.5], [16.5, 12.5], [-16.5, -12.5], [16.5, -12.5]]) {
+  // ---- Site B "Array": solar panel field ----
+  function panel(x, z, rotationY) {
+    const frame = new THREE.Group();
+    const slab = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.12, 2.2), materials.panel);
+    slab.castShadow = true;
+    slab.receiveShadow = true;
+    frame.add(slab);
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.18, 1.1, 0.18), materials.steel);
+    leg.position.set(0, -0.55, 0);
+    frame.add(leg);
+    const leg2 = leg.clone();
+    leg2.position.x = 1.4;
+    frame.add(leg2);
+    const leg3 = leg.clone();
+    leg3.position.x = -1.4;
+    frame.add(leg3);
+    frame.position.set(x, 1.15, z);
+    frame.rotation.x = -0.42;
+    frame.rotation.y = rotationY;
+    group.add(frame);
+    const bounds = new THREE.Box3().setFromObject(frame);
+    colliders.push(bounds);
+    shootables.push(slab);
+    return frame;
+  }
+  panel(11, -8, 0.2); panel(17, -8, -0.2); panel(11, -14.5, 0.2); panel(17, -14.5, -0.2);
+  panel(-6, 9, 0.15); panel(6, 9, -0.15); panel(-6, 13.5, 0.15); panel(6, 13.5, -0.15);
+  // Transformer boxes near B.
+  box(1.8, 1.4, 1.2, 20.5, 0.7, -5, 'rust');
+  box(1.8, 1.4, 1.2, 20.5, 0.7, -8, 'steel');
+
+  // ---- Mid "Conduit": an overhead pipe run + cover crates ----
+  const pipe = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 40, 12), materials.steel);
+  pipe.rotation.x = Math.PI / 2;
+  pipe.position.set(0, 4.4, 0);
+  pipe.castShadow = true;
+  group.add(pipe);
+  box(0.8, 4.4, 0.8, -3.4, 2.2, -6, 'steel');
+  box(0.8, 4.4, 0.8, 3.4, 2.2, 6, 'steel');
+  box(1.6, 1.1, 1.6, -4.5, 0.55, -2, 'rust');
+  box(1.6, 1.1, 1.6, 4.5, 0.55, 2, 'rust');
+  box(1.6, 1.1, 1.6, -4.5, 0.55, 3.5, 'sand');
+  box(1.6, 1.1, 1.6, 4.5, 0.55, -3.5, 'sand');
+
+  // Lane cover: crates, barriers and pillars along west / east / mid.
+  box(1.6, 1.1, 1.6, -19, 0.55, 10, 'rust');
+  box(1.6, 1.1, 1.6, -16.5, 0.55, 2, 'sand');
+  box(1.6, 1.1, 1.6, -21, 0.55, -6, 'sand');
+  box(1.6, 1.1, 1.6, 19, 0.55, 10, 'rust');
+  box(1.6, 1.1, 1.6, 16.5, 0.55, 2, 'sand');
+  box(1.6, 1.1, 1.6, 21, 0.55, -6, 'sand');
+  box(1.2, 3.2, 1.2, -9, 1.6, 0, 'concrete');
+  box(1.2, 3.2, 1.2, 9, 1.6, 0, 'concrete');
+  box(3.4, 1.0, 1.2, -14, 0.5, 6, 'concrete');
+  box(3.4, 1.0, 1.2, 14, 0.5, 6, 'concrete');
+  // Spawn cover.
+  box(4.2, 1.0, 1.0, -8, 0.5, 17.5, 'concrete');
+  box(4.2, 1.0, 1.0, 8, 0.5, 17.5, 'concrete');
+  box(4.2, 1.0, 1.0, -8, 0.5, -17.5, 'concrete');
+  box(4.2, 1.0, 1.0, 8, 0.5, -17.5, 'concrete');
+  // Barrels.
+  for (const [x, z] of [[-22, 14], [22, 14], [-22, -10], [22, -16], [-12, -17], [12, -17]]) {
     const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 1.1, 14), materials.rust);
     barrel.position.set(x, 0.55, z);
     barrel.castShadow = true;
@@ -151,34 +223,89 @@ export function createWorld(scene) {
     shootables.push(barrel);
   }
 
-  // Light: a low amber sun from the west, cool dusk fill, hemisphere sky gradient.
-  const sky = new THREE.HemisphereLight(new THREE.Color('#8fa3c8'), new THREE.Color('#1c1f26'), 1.5);
+  // ---- Site markers: glowing A / B boards + beacon lights ----
+  function siteBoard(letter, x, z, color) {
+    const board = new THREE.Mesh(
+      new THREE.PlaneGeometry(1.6, 1.6),
+      new THREE.MeshBasicMaterial({ map: letterTexture(letter, color), transparent: true }),
+    );
+    board.position.set(x, 3.2, z);
+    group.add(board);
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 3.2, 8), materials.steel);
+    post.position.set(x, 1.6, z);
+    group.add(post);
+    return board;
+  }
+  const boardA = siteBoard('A', -14, -11, '#ff9a2e');
+  const boardB = siteBoard('B', 14, -11, '#2ed3c6');
+  const lightA = new THREE.PointLight(new THREE.Color(PALETTE.helios), 8, 14);
+  lightA.position.set(-14, 3.5, -11);
+  scene.add(lightA);
+  const lightB = new THREE.PointLight(new THREE.Color(PALETTE.umbra), 8, 14);
+  lightB.position.set(14, 3.5, -11);
+  scene.add(lightB);
+
+  // The planted charge: a small blinking device, hidden until a plant happens.
+  const chargeGroup = new THREE.Group();
+  const chargeBody = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.28, 0.36), materials.charge);
+  chargeBody.castShadow = true;
+  const chargeLight = new THREE.Mesh(
+    new THREE.SphereGeometry(0.07, 10, 8),
+    new THREE.MeshBasicMaterial({ color: new THREE.Color('#ff2020') }),
+  );
+  chargeLight.position.set(0, 0.2, 0);
+  chargeGroup.add(chargeBody, chargeLight);
+  chargeGroup.visible = false;
+  scene.add(chargeGroup);
+
+  // Dust motes drifting in the golden light.
+  const dustCount = 220;
+  const dustPositions = new Float32Array(dustCount * 3);
+  for (let i = 0; i < dustCount; i += 1) {
+    dustPositions[i * 3] = (Math.random() - 0.5) * 46;
+    dustPositions[i * 3 + 1] = 0.3 + Math.random() * 4.5;
+    dustPositions[i * 3 + 2] = (Math.random() - 0.5) * 38;
+  }
+  const dustGeo = new THREE.BufferGeometry();
+  dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPositions, 3));
+  const dust = new THREE.Points(dustGeo, new THREE.PointsMaterial({ color: 0xffd9a0, size: 0.06, transparent: true, opacity: 0.55 }));
+  scene.add(dust);
+
+  // Light: a low golden sun from the west, warm hemisphere, cool fill.
+  const sky = new THREE.HemisphereLight(new THREE.Color('#ffd9a0'), new THREE.Color('#5c4a33'), 1.4);
   scene.add(sky);
-  const sun = new THREE.DirectionalLight(new THREE.Color('#ffb35c'), 3.0);
-  sun.position.set(-18, 12, 8);
+  const sun = new THREE.DirectionalLight(new THREE.Color('#ffb35c'), 3.2);
+  sun.position.set(-20, 13, 10);
   sun.target.position.set(4, 0, -2);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
-  sun.shadow.camera.left = -28;
-  sun.shadow.camera.right = 28;
-  sun.shadow.camera.top = 24;
-  sun.shadow.camera.bottom = -24;
-  sun.shadow.camera.far = 70;
+  sun.shadow.camera.left = -30;
+  sun.shadow.camera.right = 30;
+  sun.shadow.camera.top = 26;
+  sun.shadow.camera.bottom = -26;
+  sun.shadow.camera.far = 80;
   sun.shadow.bias = -0.0006;
   scene.add(sun, sun.target);
-  const fill = new THREE.DirectionalLight(new THREE.Color('#5f7fb0'), 0.7);
-  fill.position.set(14, 10, -12);
+  const fill = new THREE.DirectionalLight(new THREE.Color('#7fa0c8'), 0.6);
+  fill.position.set(16, 12, -14);
   scene.add(fill);
 
   return {
     colliders,
     shootables,
     group,
-    beacon,
-    beaconLight,
-    relayCenter: new THREE.Vector3(0, 0, 0),
-    relayRadius: 3.6,
-    vanguardSpawn: new THREE.Vector3(0, 0, 15.5),
-    emberSpawn: new THREE.Vector3(0, 0, -15.5),
+    boardA,
+    boardB,
+    lightA,
+    lightB,
+    chargeGroup,
+    chargeLight,
+    dust,
+    sites: {
+      A: { center: new THREE.Vector3(-14, 0, -11), radius: 4.2 },
+      B: { center: new THREE.Vector3(14, 0, -11), radius: 4.2 },
+    },
+    heliosSpawn: new THREE.Vector3(0, 0, 17),
+    umbraSpawn: new THREE.Vector3(0, 0, -17),
   };
 }

@@ -1,6 +1,6 @@
-// EMBERLINE — player movement: acceleration, friction, gravity, crouch and jump,
-// resolved as a box against the world's colliders one axis at a time, so a wall never
-// swallows the player. Shared by the player and (through moveBody) by the bots.
+// SOLSTICE — player movement: acceleration, friction, gravity, crouch and jump,
+// resolved as a box against the world's colliders one axis at a time, so a wall
+// never swallows the player. The bots share the same body through makeBody.
 import * as THREE from 'three';
 
 const RADIUS = 0.34;
@@ -105,8 +105,8 @@ export function stepBody(body, dt, keys, aiming) {
 }
 
 export function createPlayer(colliders) {
-  const body = makeBody(colliders, 0, 15.5);
-  body.yaw = 0; // face north, toward the Ember spawn and the Relay.
+  const body = makeBody(colliders, 0, 17);
+  body.yaw = 0; // face north, toward the UMBRA spawn and the two sites.
 
   function look(dx, dy, sensitivity = 0.0022) {
     body.yaw -= dx * sensitivity;

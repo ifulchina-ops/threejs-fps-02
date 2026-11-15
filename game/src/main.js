@@ -1,8 +1,8 @@
-// EMBERLINE — boot, the one loop, and the match: buy phases, 100-second rounds,
-// first to 5, won by elimination or by capturing the Relay at mid. Money between
-// rounds buys weapons and armour. ?shot=start|buy|play|end with &seed=N stages a
-// deterministic frame for a capture, renders it twice, then freezes it and sets
-// window.__shotReady.
+// SOLSTICE — boot, the one loop, and the match: 15-second buy phases, 100-second
+// rounds, first to 5, won by elimination, by detonating the planted Surge Charge,
+// or by defusing it. 5v5: the player plus four HELIOS bots against five UMBRA bots.
+// ?shot=start|buy|play|end with &seed=N stages a deterministic frame for a capture,
+// renders it twice, then freezes it and sets window.__shotReady.
 import * as THREE from 'three';
 import { PALETTE } from './palette.js';
 import { createWorld } from './world.js';
@@ -15,13 +15,18 @@ import { createAudio } from './audio.js';
 
 const FIXED_STEP = 1 / 60;
 const ROUND_SECONDS = 100;
-const BUY_SECONDS = 12;
-const CAPTURE_SECONDS = 6;
+const BUY_SECONDS = 15;
+const PLANT_SECONDS = 4;
+const DEFUSE_SECONDS = 6;
+const FUSE_SECONDS = 35;
 const WIN_ROUNDS = 5;
 const MAX_ROUNDS = 9;
 const KILL_REWARD = 300;
-const WIN_REWARD = 325;
-const LOSS_REWARD = 1400;
+const PLANT_REWARD = 300;
+const WIN_REWARD = 3250;
+const LOSS_BASE = 1400;
+const LOSS_STEP = 500;
+const LOSS_MAX = 3400;
 
 const params = new URLSearchParams(window.location.search);
 const shot = params.get('shot');
@@ -50,8 +55,8 @@ document.getElementById('game').appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(PALETTE.sky);
-scene.fog = new THREE.Fog(new THREE.Color(PALETTE.sky), 30, 85);
-const camera = new THREE.PerspectiveCamera(74, window.innerWidth / window.innerHeight, 0.05, 160);
+scene.fog = new THREE.Fog(new THREE.Color(PALETTE.fog), 35, 95);
+const camera = new THREE.PerspectiveCamera(74, window.innerWidth / window.innerHeight, 0.05, 180);
 scene.add(camera);
 
 const audio = createAudio();
@@ -66,26 +71,46 @@ raycaster.far = 120;
 const direction = new THREE.Vector3();
 const muzzleWorld = new THREE.Vector3();
 
+// ---- The Surge Charge: who holds it, where it is, whether it is live ----
+const charge = {
+  holder: 'player', // 'player' | bot | null
+  droppedAt: null,
+  planted: false,
+  site: null, // 'A' | 'B'
+  plantProgress: 0,
+  defuseProgress: 0,
+  fuseLeft: FUSE_SECONDS,
+};
+
 const bots = createBots(scene, world.colliders, world.shootables, {
   damagePlayer(damage, fromBot) { damagePlayer(damage, fromBot); },
   onKill(victim, attacker) { onBotKilled(victim, attacker); },
   audioDistantShot() { audio.distantShot(); },
   playerSpeed() { return player.groundSpeed(); },
+  radio(text, team) { hud.radio(text, team); audio.radio(); },
+  onCarrierDown(bot) { dropCharge(bot.body.position); },
+  onChargePickup(bot) {
+    charge.holder = bot;
+    charge.droppedAt = null;
+    bots.setCarrier(bot);
+    hud.radio(`${bot.name}: Got the charge — heading to ${bots.plan.target}!`, 'helios');
+  },
+  onPlantStart(bot, site) {
+    hud.radio(`${bot.name}: Planting at ${site} — cover me!`, 'helios');
+  },
 });
 const shootables = world.shootables.concat(bots.hitMeshes);
 
 // ---- Match state ----
 let phase = 'menu';
 let round = 1;
-let score = { vanguard: 0, ember: 0 };
+let score = { helios: 0, umbra: 0 };
 let money = 800;
 let health = 100;
 let armor = 0;
 let playerAlive = true;
 let roundTimer = ROUND_SECONDS;
 let buyTimer = BUY_SECONDS;
-let capture = { vanguard: 0, ember: 0 };
-let captureTickAt = 0;
 let roundEndAt = 0;
 let elapsed = 0;
 let frozen = false;
@@ -94,8 +119,12 @@ let accumulator = 0;
 let lastTime = performance.now();
 let kills = 0;
 let deaths = 0;
+let lossStreak = 0;
 let fovTarget = 74;
-let staging = false; // true while a ?shot= scene is being staged: no damage, no round end.
+let staging = false;
+let lastBeepAt = 0;
+let lastPlantTickAt = 0;
+let currentPlan = null;
 
 const body = player.state;
 
@@ -104,36 +133,62 @@ function syncCamera() {
   camera.rotation.set(body.pitch, body.yaw, 0, 'YXZ');
 }
 
+function siteAt(pos) {
+  for (const key of ['A', 'B']) {
+    const site = world.sites[key];
+    const dx = pos.x - site.center.x;
+    const dz = pos.z - site.center.z;
+    if (dx * dx + dz * dz < site.radius * site.radius) return key;
+  }
+  return null;
+}
+
 function refreshHud() {
   hud.setAmmo(weapon.state.mag, weapon.state.reserve, weapon.state.weaponId);
   hud.setHealth(health, armor);
   hud.setMoney(money);
-  hud.setScore(score.vanguard, score.ember, round);
-  hud.setTimer(phase === 'buy' ? buyTimer : roundTimer, phase === 'buy' ? 'BUY' : phase === 'live' ? 'ROUND' : phase.toUpperCase());
+  hud.setScore(score.helios, score.umbra, round);
+  hud.setAlive(bots.aliveCount('helios') + (playerAlive ? 1 : 0), bots.aliveCount('umbra'));
+  hud.setCharge(charge.holder === 'player' && playerAlive);
+  if (phase === 'buy') hud.setTimer(buyTimer, 'BUY');
+  else if (charge.planted) hud.setTimer(charge.fuseLeft, 'BOMB');
+  else hud.setTimer(roundTimer, phase === 'live' ? 'ROUND' : phase.toUpperCase());
+  hud.setBomb(charge.planted ? charge.fuseLeft : null, charge.site);
 }
 
 function startMatch() {
-  score = { vanguard: 0, ember: 0 };
+  score = { helios: 0, umbra: 0 };
   round = 1;
   money = 800;
   kills = 0;
   deaths = 0;
+  lossStreak = 0;
   startBuy();
 }
 
 function startBuy() {
   phase = 'buy';
   buyTimer = BUY_SECONDS;
-  capture = { vanguard: 0, ember: 0 };
-  bots.reset(random);
-  player.reset(0, 15.5, 0);
+  currentPlan = bots.reset(random);
+  bots.setCarrier(null);
+  charge.holder = 'player';
+  charge.droppedAt = null;
+  charge.planted = false;
+  charge.site = null;
+  charge.plantProgress = 0;
+  charge.defuseProgress = 0;
+  charge.fuseLeft = FUSE_SECONDS;
+  world.chargeGroup.visible = false;
+  player.reset(0, 17, 0);
   health = 100;
   playerAlive = true;
   weapon.refill();
   hud.hideOverlay();
   hud.hideBanner();
-  hud.setCapture(null);
+  hud.setProgress(null);
+  hud.setBomb(null);
   hud.showBuy(money, weapon.state.weaponId, armor > 0, buy);
+  hud.banner(`PLAN: ${currentPlan.name}`, currentPlan.callout, 3000);
   refreshHud();
 }
 
@@ -143,7 +198,7 @@ function startRound() {
   hud.hideBuy();
   hud.hideOverlay();
   audio.roundStart();
-  hud.banner(`ROUND ${round}`, 'Capture the Relay or eliminate the Ember squad', 2000);
+  hud.banner(`ROUND ${round}`, `Plant the charge at A or B — or eliminate UMBRA`, 2000);
   refreshHud();
   if (!shot) input.requestLock();
 }
@@ -152,14 +207,20 @@ function endRound(winner, reason) {
   if (phase !== 'live' || staging) return;
   phase = 'roundEnd';
   roundEndAt = elapsed + 4;
-  const playerWon = winner === 'vanguard';
+  const playerWon = winner === 'helios';
   if (winner) score[winner] += 1;
-  money += playerWon ? WIN_REWARD : LOSS_REWARD;
+  if (playerWon) {
+    money += WIN_REWARD;
+    lossStreak = 0;
+  } else {
+    money += Math.min(LOSS_MAX, LOSS_BASE + lossStreak * LOSS_STEP);
+    lossStreak += 1;
+  }
   if (winner) audio.roundWin();
   else audio.roundLose();
-  const label = winner === 'vanguard' ? 'VANGUARD WINS THE ROUND' : winner === 'ember' ? 'EMBER WINS THE ROUND' : 'ROUND DRAW';
+  const label = winner === 'helios' ? 'HELIOS WINS THE ROUND' : winner === 'umbra' ? 'UMBRA WINS THE ROUND' : 'ROUND DRAW';
   hud.banner(label, reason, 3600);
-  hud.setCapture(null);
+  hud.setProgress(null);
   refreshHud();
 }
 
@@ -167,7 +228,7 @@ function endMatch() {
   phase = 'matchEnd';
   if (document.pointerLockElement) document.exitPointerLock();
   hud.hideBuy();
-  hud.showMatchEnd(score.vanguard, score.ember);
+  hud.showMatchEnd(score.helios, score.umbra, kills, deaths);
   refreshHud();
 }
 
@@ -191,18 +252,44 @@ function buy(id) {
   refreshHud();
 }
 
+function dropCharge(at) {
+  if (charge.planted) return;
+  charge.holder = null;
+  charge.droppedAt = at.clone();
+  charge.droppedAt.y = 0;
+  charge.plantProgress = 0;
+  hud.radio('Charge dropped — pick it up!', 'helios');
+}
+
+function completePlant(site, byPlayer) {
+  charge.planted = true;
+  charge.site = site;
+  charge.fuseLeft = FUSE_SECONDS;
+  charge.plantProgress = 0;
+  charge.holder = null;
+  bots.setCarrier(null);
+  world.chargeGroup.visible = true;
+  world.chargeGroup.position.copy(world.sites[site].center);
+  world.chargeGroup.position.y = 0.15;
+  audio.planted();
+  if (byPlayer) {
+    money += PLANT_REWARD;
+    hud.radio('You: Charge planted — hold the site!', 'helios');
+  } else {
+    hud.radio('Charge planted — hold the site!', 'helios');
+  }
+  hud.banner(`CHARGE PLANTED AT ${site}`, 'UMBRA has 35 seconds to defuse it', 3000);
+  refreshHud();
+}
+
 function onBotKilled(victim, attacker) {
   const attackerName = attacker === 'player' ? 'You' : attacker ? attacker.name : 'You';
-  const friendly = victim.team === 'ember';
-  hud.killfeed(`${attackerName}  ▸  ${victim.name}`, victim.team === 'vanguard');
-  if (attacker === 'player' && victim.team === 'ember') {
+  hud.killfeed(`${attackerName}  ▸  ${victim.name}`, victim.team === 'umbra');
+  if (attacker === 'player' && victim.team === 'umbra') {
     money += KILL_REWARD;
     kills += 1;
     audio.hit(true);
     refreshHud();
-  }
-  if (victim.team === 'vanguard' && !bots.aliveCount('vanguard') && playerAlive === false) {
-    // Whole Vanguard side is gone; handled by the elimination check in step().
   }
 }
 
@@ -222,6 +309,7 @@ function damagePlayer(damage, fromBot) {
     health = 0;
     playerAlive = false;
     deaths += 1;
+    if (charge.holder === 'player') dropCharge(body.position);
     if (document.pointerLockElement) document.exitPointerLock();
     hud.killfeed(`${fromBot.name}  ▸  You`, false);
     hud.showOverlay('dead');
@@ -283,36 +371,68 @@ function shoot(spread) {
   return hitAny;
 }
 
-function stepCapture(dt) {
-  const inZone = (pos) => {
-    const dx = pos.x - world.relayCenter.x;
-    const dz = pos.z - world.relayCenter.z;
-    return dx * dx + dz * dz < world.relayRadius * world.relayRadius;
-  };
-  let vanguardIn = 0;
-  let emberIn = 0;
-  if (playerAlive && inZone(body.position)) vanguardIn += 1;
-  for (const bot of bots.bots) {
-    if (!bot.alive || !inZone(bot.body.position)) continue;
-    if (bot.team === 'vanguard') vanguardIn += 1;
-    else emberIn += 1;
+// Plant, defuse and fuse progress, advanced once per fixed step.
+function stepCharge(dt) {
+  if (charge.planted) {
+    // A defuse channel wins the round for UMBRA; the fuse wins it for HELIOS.
+    const defusing = bots.bots.some((b) => b.alive && b.defusing);
+    if (defusing) {
+      charge.defuseProgress = Math.min(1, charge.defuseProgress + dt / DEFUSE_SECONDS);
+      if (elapsed >= lastPlantTickAt) { audio.defuseTick(); lastPlantTickAt = elapsed + 0.5; }
+      hud.setProgress(charge.defuseProgress, 'UMBRA DEFUSING THE CHARGE');
+      if (charge.defuseProgress >= 1) {
+        charge.planted = false;
+        world.chargeGroup.visible = false;
+        endRound('umbra', 'UMBRA defused the charge.');
+        return;
+      }
+    } else {
+      charge.defuseProgress = Math.max(0, charge.defuseProgress - dt / (DEFUSE_SECONDS * 2));
+      hud.setProgress(charge.defuseProgress > 0.02 ? charge.defuseProgress : null, 'UMBRA DEFUSING THE CHARGE');
+    }
+    charge.fuseLeft -= dt;
+    const interval = charge.fuseLeft > 10 ? 1 : 0.5;
+    if (elapsed - lastBeepAt >= interval) {
+      audio.fuseBeep(charge.fuseLeft <= 10);
+      lastBeepAt = elapsed;
+    }
+    if (charge.fuseLeft <= 0) {
+      audio.explosion();
+      world.chargeGroup.visible = false;
+      endRound('helios', 'The charge detonated — the site is gone.');
+    }
+    return;
   }
-  if (vanguardIn > 0 && emberIn === 0) {
-    capture.vanguard = Math.min(1, capture.vanguard + dt / CAPTURE_SECONDS);
-    capture.ember = Math.max(0, capture.ember - dt / (CAPTURE_SECONDS / 2));
-    if (elapsed >= captureTickAt) { audio.captureTick(); captureTickAt = elapsed + 1; }
-    hud.setCapture(capture.vanguard, 'VANGUARD CAPTURING RELAY');
-    if (capture.vanguard >= 1) endRound('vanguard', 'Relay captured — the yard is ours.');
-  } else if (emberIn > 0 && vanguardIn === 0) {
-    capture.ember = Math.min(1, capture.ember + dt / CAPTURE_SECONDS);
-    capture.vanguard = Math.max(0, capture.vanguard - dt / (CAPTURE_SECONDS / 2));
-    hud.setCapture(capture.ember, 'EMBER CAPTURING RELAY');
-    if (capture.ember >= 1) endRound('ember', 'Ember captured the Relay.');
+
+  // Not planted yet: the player or the carrier bot plants inside a site.
+  const playerSite = playerAlive && charge.holder === 'player' ? siteAt(body.position) : null;
+  const botPlanting = bots.bots.find((b) => b.alive && b.planting);
+  if (playerSite && input.state.interact && !input.state.firing) {
+    charge.plantProgress = Math.min(1, charge.plantProgress + dt / PLANT_SECONDS);
+    if (elapsed >= lastPlantTickAt) { audio.plantTick(); lastPlantTickAt = elapsed + 0.5; }
+    hud.setProgress(charge.plantProgress, `PLANTING CHARGE AT ${playerSite}`);
+    if (charge.plantProgress >= 1) completePlant(playerSite, true);
+  } else if (botPlanting) {
+    charge.plantProgress = Math.min(1, charge.plantProgress + dt / PLANT_SECONDS);
+    if (elapsed >= lastPlantTickAt) { audio.plantTick(); lastPlantTickAt = elapsed + 0.5; }
+    hud.setProgress(charge.plantProgress, `${botPlanting.name.toUpperCase()} PLANTING AT ${bots.plan.target}`);
+    if (charge.plantProgress >= 1) completePlant(bots.plan.target, false);
   } else {
-    capture.vanguard = Math.max(0, capture.vanguard - dt / (CAPTURE_SECONDS * 2));
-    capture.ember = Math.max(0, capture.ember - dt / (CAPTURE_SECONDS * 2));
-    const leading = capture.vanguard >= capture.ember ? capture.vanguard : capture.ember;
-    hud.setCapture(leading > 0.02 ? leading : null, capture.vanguard >= capture.ember ? 'VANGUARD CAPTURING RELAY' : 'EMBER CAPTURING RELAY');
+    charge.plantProgress = Math.max(0, charge.plantProgress - dt / (PLANT_SECONDS * 2));
+    if (playerSite && charge.holder === 'player') {
+      hud.setProgress(charge.plantProgress > 0.02 ? charge.plantProgress : 0, `HOLD E — PLANT THE CHARGE AT ${playerSite}`);
+    } else {
+      hud.setProgress(charge.plantProgress > 0.02 ? charge.plantProgress : null, 'PLANTING CHARGE');
+    }
+  }
+
+  // The player can pick up a dropped charge by walking over it.
+  if (charge.holder === null && charge.droppedAt && playerAlive) {
+    if (body.position.distanceTo(charge.droppedAt) < 1.4) {
+      charge.holder = 'player';
+      charge.droppedAt = null;
+      hud.radio('You picked up the charge.', 'helios');
+    }
   }
 }
 
@@ -322,36 +442,48 @@ function step(dt) {
     buyTimer -= dt;
     if (buyTimer <= 0) startRound();
   } else if (phase === 'live') {
-    roundTimer -= dt;
+    if (!charge.planted) roundTimer -= dt;
     player.step(dt, input.state.keys, input.state.aiming);
     weapon.step(dt, input.state.aiming);
-    bots.step(dt, elapsed, random, body, playerAlive);
-    stepCapture(dt);
+    bots.step(dt, elapsed, random, body, playerAlive, charge);
+    stepCharge(dt);
     // Elimination check.
-    if (bots.aliveCount('ember') === 0) endRound('vanguard', 'Ember squad eliminated.');
-    else if (bots.aliveCount('vanguard') === 0 && !playerAlive) endRound('ember', 'Vanguard squad eliminated.');
-    else if (roundTimer <= 0) {
-      const vanguardAlive = bots.aliveCount('vanguard') + (playerAlive ? 1 : 0);
-      const emberAlive = bots.aliveCount('ember');
-      if (vanguardAlive > emberAlive) endRound('vanguard', 'Time — Vanguard held more fighters.');
-      else if (emberAlive > vanguardAlive) endRound('ember', 'Time — Ember held more fighters.');
-      else endRound(null, 'Time — nobody held the yard.');
-    }
+    const umbraAlive = bots.aliveCount('umbra');
+    const heliosAlive = bots.aliveCount('helios') + (playerAlive ? 1 : 0);
+    if (umbraAlive === 0) endRound('helios', 'UMBRA squad eliminated.');
+    else if (heliosAlive === 0 && !charge.planted) endRound('umbra', 'HELIOS squad eliminated.');
+    else if (roundTimer <= 0 && !charge.planted) endRound('umbra', 'Time — UMBRA held the sites.');
   } else if (phase === 'roundEnd') {
     weapon.step(dt, false);
-    bots.step(dt, elapsed, random, body, playerAlive);
+    bots.step(dt, elapsed, random, body, playerAlive, charge);
     if (elapsed >= roundEndAt) {
-      if (score.vanguard >= WIN_ROUNDS || score.ember >= WIN_ROUNDS || round >= MAX_ROUNDS) endMatch();
+      if (score.helios >= WIN_ROUNDS || score.umbra >= WIN_ROUNDS || round >= MAX_ROUNDS) endMatch();
       else {
         round += 1;
         startBuy();
       }
     }
   }
-  // Relay beacon pulse.
+  // Site beacons pulse; the planted charge blinks faster as the fuse runs out.
   const pulse = 0.7 + Math.sin(elapsed * 3) * 0.3;
-  world.beacon.material.color.setRGB(0.34 * pulse, 0.84 * pulse, 0.91 * pulse);
-  world.beaconLight.intensity = 4 + pulse * 4;
+  world.lightA.intensity = 6 + pulse * 4;
+  world.lightB.intensity = 6 + pulse * 4;
+  if (world.chargeGroup.visible) {
+    const blink = charge.planted && charge.fuseLeft <= 10
+      ? (Math.sin(elapsed * 14) > 0 ? 1 : 0.1)
+      : (Math.sin(elapsed * 4) > 0 ? 1 : 0.2);
+    world.chargeLight.material.color.setRGB(1, 0.1 * blink, 0.1 * blink);
+  }
+  // Dropped charge marker follows the drop point.
+  if (charge.droppedAt && !charge.planted) {
+    world.chargeGroup.visible = true;
+    world.chargeGroup.position.copy(charge.droppedAt);
+    world.chargeGroup.position.y = 0.15;
+  } else if (!charge.planted) {
+    world.chargeGroup.visible = false;
+  }
+  // Dust drifts on the wind.
+  world.dust.rotation.y = elapsed * 0.004;
 }
 
 function frame(now) {
@@ -365,13 +497,11 @@ function frame(now) {
       if (input.state.firing && weapon.ready()) shoot(weapon.spread(player.groundSpeed(), input.state.aiming, body.crouching));
       if (input.state.keys.has('KeyR') && weapon.reload()) audio.reload();
     }
-    // ADS zoom.
     fovTarget = input.state.aiming && phase === 'live' ? 55 : 74;
     if (Math.abs(camera.fov - fovTarget) > 0.1) {
       camera.fov += (fovTarget - camera.fov) * Math.min(1, dt * 12);
       camera.updateProjectionMatrix();
     }
-    // Crosshair spread readout.
     if (phase === 'live') {
       const spread = weapon.spread(player.groundSpeed(), input.state.aiming, body.crouching);
       hud.setSpread(3 + spread * 260);
@@ -386,6 +516,7 @@ function frame(now) {
     if (accumulator > FIXED_STEP * 5) accumulator = 0;
     syncCamera();
     refreshHud();
+    hud.drawRadar(body, bots.bots, charge, elapsed);
   }
   renderer.render(scene, camera);
 }
@@ -442,16 +573,15 @@ function settle(steps) {
   for (let index = 0; index < steps; index += 1) step(FIXED_STEP);
 }
 
-// Put an Ember bot at an exact spot for a staged capture: the bots wander to
-// waypoints on their own, so a screenshot needs them placed, not hoped for.
 function placeBot(index, x, z) {
   const bot = bots.bots[index];
   bot.body.position.set(x, 0, z);
   bot.body.velocity.set(0, 0, 0);
-  bot.body.yaw = bot.team === 'vanguard' ? 0 : Math.PI;
+  bot.body.yaw = bot.team === 'helios' ? 0 : Math.PI;
   bot.group.position.set(x, 0, z);
   bot.group.rotation.set(0, bot.body.yaw, 0);
-  bot.waypoint = new THREE.Vector2(x, z);
+  bot.route = [];
+  bot.routeIndex = 0;
 }
 
 function paintTwiceThenReady() {
@@ -459,6 +589,7 @@ function paintTwiceThenReady() {
   function paint() {
     requestAnimationFrame(paint);
     syncCamera();
+    hud.drawRadar(body, bots.bots, charge, elapsed);
     renderer.render(scene, camera);
     painted += 1;
     if (painted === 2) {
@@ -470,8 +601,7 @@ function paintTwiceThenReady() {
 }
 
 function runShot(name) {
-  // Stage a real match state, then freeze one frame of it.
-  score = { vanguard: name === 'end' ? 2 : name === 'play' ? 1 : 0, ember: name === 'end' ? 1 : 0 };
+  score = { helios: name === 'end' ? 2 : name === 'play' ? 1 : 0, umbra: name === 'end' ? 1 : 0 };
   round = name === 'play' ? 2 : name === 'end' ? 3 : 1;
   money = name === 'buy' ? 2450 : name === 'play' ? 1850 : 800;
   health = name === 'play' ? 82 : 100;
@@ -480,7 +610,12 @@ function runShot(name) {
   roundTimer = name === 'play' ? 72 : ROUND_SECONDS;
   buyTimer = 9;
   playerAlive = true;
-  bots.reset(random);
+  currentPlan = bots.reset(random, false);
+  bots.setCarrier(null);
+  charge.holder = 'player';
+  charge.droppedAt = null;
+  charge.planted = false;
+  charge.site = null;
   weapon.equip('rifle');
   weapon.refill();
   if (name === 'play') weapon.state.mag = 27;
@@ -489,54 +624,62 @@ function runShot(name) {
   staging = true;
   if (name === 'start') {
     phase = 'menu';
-    player.reset(0, 15.5, 0);
-    placeBot(3, 2, -4);
-    placeBot(4, -3.5, -6);
-    aimAt(new THREE.Vector3(0, 1.6, 0));
+    player.reset(0, 17, 0);
+    placeBot(4, 2, -4);
+    placeBot(5, -3.5, -6);
+    aimAt(new THREE.Vector3(0, 1.6, -8));
     settle(20);
     hud.showOverlay('start');
   } else if (name === 'buy') {
-    player.reset(-2, 14, 0.15);
-    placeBot(3, 2, -4);
-    placeBot(4, -3.5, -6);
+    player.reset(-2, 15, 0);
+    placeBot(4, 2, -4);
+    placeBot(5, -3.5, -6);
     aimAt(new THREE.Vector3(0, 1.6, -4));
     settle(20);
     hud.showBuy(money, weapon.state.weaponId, armor > 0, buy);
-    hud.banner('BUY PHASE', 'Round 2 starts in 9 seconds', 4000);
+    hud.banner(`PLAN: ${currentPlan.name}`, currentPlan.callout, 4000);
   } else if (name === 'play') {
-    // Mid-fight at the Relay: two Ember bots staged in the open, one dropped.
-    player.reset(-4, 7, 0);
-    placeBot(3, -1.5, -2);
-    placeBot(4, 3.5, -3.5);
+    // Mid-fight at A with the charge live: two UMBRA bots staged in the open,
+    // one dropped, the fuse bar up.
+    player.reset(-8, -2, 0);
+    placeBot(4, -12, -8);
+    placeBot(5, -16, -12);
+    placeBot(6, -10, -14);
     settle(12);
     const point = bots.aimPoint(0);
-    for (let roundFired = 0; roundFired < 4; roundFired += 1) {
+    for (let fired = 0; fired < 4; fired += 1) {
       aimAt(point);
       shoot(0);
       settle(7);
     }
     aimAt(bots.aimPoint(0));
     shoot(0);
-    capture.vanguard = 0.45;
-    hud.setCapture(0.45, 'VANGUARD CAPTURING RELAY');
+    charge.planted = true;
+    charge.site = 'A';
+    charge.fuseLeft = 24;
+    charge.holder = null;
+    world.chargeGroup.visible = true;
+    world.chargeGroup.position.copy(world.sites.A.center);
+    world.chargeGroup.position.y = 0.15;
+    hud.radio('Charge planted at A — hold the site!', 'helios');
+    hud.killfeed('You  ▸  Ash', true);
     settle(10);
   } else {
-    // end: a round just won, banner up, a fallen Ember bot in view.
-    player.reset(-4, 5, 0);
-    placeBot(3, -1, -2);
-    placeBot(4, 2.5, -3);
+    // end: a round just won, banner up, a fallen UMBRA bot in view.
+    player.reset(-8, -2, 0);
+    placeBot(4, -12, -8);
+    placeBot(5, -16, -12);
     settle(12);
     const point = bots.aimPoint(0);
-    for (let roundFired = 0; roundFired < 4; roundFired += 1) {
+    for (let fired = 0; fired < 4; fired += 1) {
       aimAt(point);
       shoot(0);
       settle(7);
     }
     settle(10);
-    capture = { vanguard: 0, ember: 0 };
-    hud.setCapture(null);
-    hud.banner('VANGUARD WINS THE ROUND', 'Ember squad eliminated — Relay held', 8000);
-    score = { vanguard: 2, ember: 1 };
+    charge.holder = null; charge.planted = false; charge.site = null;
+    hud.banner('HELIOS WINS THE ROUND', 'The charge detonated — the site is gone.', 8000);
+    score = { helios: 2, umbra: 1 };
   }
   staging = false;
   refreshHud();
@@ -545,6 +688,6 @@ function runShot(name) {
 
 syncCamera();
 refreshHud();
-window.__emberline = { scene, camera, player, bots, weapon };
+window.__solstice = { scene, camera, player, bots, weapon, charge };
 if (shot) runShot(shot);
 else requestAnimationFrame(frame);

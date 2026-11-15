@@ -1,4 +1,4 @@
-// EMBERLINE — a tiny static server for game/ (Node 22, standard library only), so
+// SOLSTICE — a tiny static server for game/ (Node 22, standard library only), so
 // the entry can be played locally without a build step: `node serve.ts` serves
 // game/ on http://localhost:8080. It sends the MIME types a browser game needs,
 // refuses any path outside game/, and otherwise does nothing clever.
@@ -57,5 +57,5 @@ createServer((request, response) => {
   });
   createReadStream(file).pipe(response);
 }).listen(port, '127.0.0.1', () => {
-  console.log(`EMBERLINE serving game/ at http://localhost:${port}`);
+  console.log(`SOLSTICE serving game/ at http://localhost:${port}`);
 });

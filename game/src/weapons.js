@@ -1,33 +1,34 @@
-// EMBERLINE — the armoury. Five weapons, one table: price, damage, headshot
+// SOLSTICE — the armoury. Five weapons, one table: price, damage, headshot
 // multiplier, fire rate, magazine, spread and feel. Accuracy is the skill: spread
 // grows with movement and shrinks when still, crouched or aiming down sights.
 // Damage falls off with range, so a rifle wins a lane and a shotgun wins a corner.
+// The view model is three boxes and a sight on the camera, with muzzle flash.
 import * as THREE from 'three';
 import { PALETTE } from './palette.js';
 
 export const WEAPONS = {
   pistol: {
-    id: 'pistol', name: 'P9 Sidearm', price: 0, damage: 34, headMult: 3.0,
+    id: 'pistol', name: 'VK-9 Sidearm', price: 0, damage: 34, headMult: 3.0,
     fireGap: 0.16, auto: false, mag: 12, reserve: 48, reloadTime: 1.4,
     spreadStill: 0.0035, spreadMoving: 0.02, pellets: 1, range: 45, kick: 0.006,
   },
   smg: {
-    id: 'smg', name: 'VK-9 Ripper', price: 1400, damage: 26, headMult: 3.0,
+    id: 'smg', name: 'K-9 Jackal', price: 1250, damage: 26, headMult: 3.0,
     fireGap: 0.082, auto: true, mag: 25, reserve: 100, reloadTime: 1.7,
     spreadStill: 0.005, spreadMoving: 0.03, pellets: 1, range: 38, kick: 0.007,
   },
-  rifle: {
-    id: 'rifle', name: 'AR-77 Longshot', price: 2700, damage: 33, headMult: 3.0,
-    fireGap: 0.108, auto: true, mag: 30, reserve: 90, reloadTime: 1.9,
-    spreadStill: 0.0022, spreadMoving: 0.028, pellets: 1, range: 70, kick: 0.009,
-  },
   shotgun: {
-    id: 'shotgun', name: 'M12 Breacher', price: 1200, damage: 13, headMult: 2.0,
+    id: 'shotgun', name: 'M590 Breacher', price: 1100, damage: 13, headMult: 2.0,
     fireGap: 0.85, auto: false, mag: 6, reserve: 24, reloadTime: 2.4,
     spreadStill: 0.03, spreadMoving: 0.05, pellets: 7, range: 18, kick: 0.02,
   },
+  rifle: {
+    id: 'rifle', name: 'AR-77 Vandal', price: 2700, damage: 33, headMult: 3.0,
+    fireGap: 0.108, auto: true, mag: 30, reserve: 90, reloadTime: 1.9,
+    spreadStill: 0.0022, spreadMoving: 0.028, pellets: 1, range: 70, kick: 0.009,
+  },
   sniper: {
-    id: 'sniper', name: 'LW-50 Deadeye', price: 4500, damage: 95, headMult: 4.0,
+    id: 'sniper', name: 'LW-50 Longshot', price: 4750, damage: 95, headMult: 4.0,
     fireGap: 1.35, auto: false, mag: 5, reserve: 15, reloadTime: 2.8,
     spreadStill: 0.0004, spreadMoving: 0.06, pellets: 1, range: 90, kick: 0.03,
   },
@@ -46,7 +47,6 @@ const VIEW_MODELS = {
 
 export function createWeapon(camera) {
   const grip = new THREE.MeshStandardMaterial({ color: new THREE.Color(PALETTE.hairline), roughness: 0.7, metalness: 0.2 });
-  // Dark gunmetal, not bright ink: a pale gun would dominate the frame at this range.
   const bodyMat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#34383f'), roughness: 0.5, metalness: 0.35 });
   const accentMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(PALETTE.accent), roughness: 0.45, metalness: 0.3 });
 
@@ -77,7 +77,6 @@ export function createWeapon(camera) {
     const sight = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.05, 0.08), accentMat);
     sight.position.set(0, 0.075, -0.05);
     model.add(sight);
-    // Small and pushed out: a 1:1 gun at 0.42 m fills the corner of a 74-degree view.
     model.scale.setScalar(0.62);
     model.position.set(0.26, -0.24, -0.55);
     flash.position.set(0.26, -0.22, -1.12);
@@ -122,7 +121,7 @@ export function createWeapon(camera) {
     }
   }
 
-  equip('rifle');
+  equip('pistol');
 
   return {
     state,

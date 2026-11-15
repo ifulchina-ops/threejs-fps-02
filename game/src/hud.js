@@ -1,17 +1,18 @@
-// EMBERLINE — the DOM HUD: crosshair, hit marker, health, armour, money, ammo,
-// round timer, team scores, capture progress, killfeed, damage flash, and the
-// overlays (start, buy, paused, round end, match end). It never touches the
-// simulation; main.js pushes numbers in and reads callbacks out.
+// SOLSTICE — the DOM HUD: crosshair, hit marker, health, armour, money, ammo,
+// round timer, team scores, alive pips, plant/defuse progress, the bomb fuse bar,
+// killfeed, radio callouts, a live radar minimap, damage flash, and the overlays
+// (start, buy, paused, dead, match end). It never touches the simulation;
+// main.js pushes numbers in and reads callbacks out.
 import { WEAPONS, BUY_ORDER, ARMOR_PRICE } from './weapons.js';
 
 const COPY = {
   start: {
-    title: 'EMBERLINE',
-    copy: 'A round-based tactical FPS in Foundry Yard. Vanguard vs Ember, first to 5 rounds — eliminate the other team or capture the Relay at mid.',
+    title: 'SOLSTICE',
+    copy: 'A round-based tactical FPS at Array Nine. HELIOS vs UMBRA, first to 5 rounds — plant the Surge Charge at A or B, or eliminate the other team.',
     action: 'Deploy',
   },
   paused: {
-    title: 'EMBERLINE',
+    title: 'SOLSTICE',
     copy: 'Paused. Click to resume.',
     action: 'Resume',
   },
@@ -35,34 +36,111 @@ export function createHud() {
   const healthBar = $('health-bar');
   const armorValue = $('armor-value');
   const moneyValue = $('money-value');
+  const chargeTag = $('charge-tag');
   const timerValue = $('timer-value');
-  const scoreVanguard = $('score-vanguard');
-  const scoreEmber = $('score-ember');
+  const scoreHelios = $('score-helios');
+  const scoreUmbra = $('score-umbra');
   const roundValue = $('round-value');
+  const aliveHelios = $('alive-helios');
+  const aliveUmbra = $('alive-umbra');
   const hitmarker = $('hitmarker');
   const crosshair = $('crosshair');
   const killfeed = $('killfeed');
+  const radioFeed = $('radio-feed');
   const banner = $('banner');
   const bannerText = $('banner-text');
   const bannerSub = $('banner-sub');
-  const captureWrap = $('capture-wrap');
-  const captureBar = $('capture-bar');
-  const captureLabel = $('capture-label');
+  const progressWrap = $('progress-wrap');
+  const progressBar = $('progress-bar');
+  const progressLabel = $('progress-label');
+  const bombWrap = $('bomb-wrap');
+  const bombBar = $('bomb-bar');
+  const bombLabel = $('bomb-label');
   const damageFlash = $('damage-flash');
   const buyPanel = $('buy-panel');
   const buyList = $('buy-list');
   const buyMoney = $('buy-money');
   const deployBtn = $('deploy');
   const phaseLabel = $('phase-label');
+  const radarCanvas = $('radar-canvas');
+  const radarCtx = radarCanvas ? radarCanvas.getContext('2d') : null;
   let hitTimer = 0;
   let bannerTimer = 0;
   let last = {};
 
   function setText(el, value, key) {
+    if (!el) return;
     if (last[key] !== value) {
       last[key] = value;
       el.textContent = value;
     }
+  }
+
+  function drawRadar(playerState, bots, charge, time) {
+    if (!radarCtx) return;
+    const W = radarCanvas.width;
+    const H = radarCanvas.height;
+    const ctx = radarCtx;
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = 'rgba(18,16,12,0.78)';
+    ctx.fillRect(0, 0, W, H);
+    const sx = (x) => (x + 24) / 48 * W;
+    const sy = (z) => (z + 20) / 40 * H;
+    // Sites.
+    ctx.strokeStyle = '#ff9a2e';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(sx(-14), sy(-11), 7, 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = '#ff9a2e';
+    ctx.font = 'bold 9px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('A', sx(-14), sy(-11) + 3);
+    ctx.strokeStyle = '#2ed3c6';
+    ctx.beginPath(); ctx.arc(sx(14), sy(-11), 7, 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = '#2ed3c6';
+    ctx.fillText('B', sx(14), sy(-11) + 3);
+    // Teammates + heard enemies.
+    for (const bot of bots) {
+      if (!bot.alive) continue;
+      const x = sx(bot.body.position.x);
+      const y = sy(bot.body.position.z);
+      if (bot.team === 'helios') {
+        ctx.fillStyle = '#ffb020';
+        ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fill();
+      } else if (time - (bot.lastShotAt || -99) < 1.5) {
+        ctx.fillStyle = '#ff5252';
+        ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    // The charge: blinking when planted, steady when dropped.
+    if (charge.planted && charge.site) {
+      const p = charge.site === 'A' ? [-14, -11] : [14, -11];
+      if (Math.floor(time * 2) % 2 === 0) {
+        ctx.fillStyle = '#ff2020';
+        ctx.save();
+        ctx.translate(sx(p[0]), sy(p[1]));
+        ctx.rotate(Math.PI / 4);
+        ctx.fillRect(-4, -4, 8, 8);
+        ctx.restore();
+      }
+    } else if (charge.droppedAt) {
+      ctx.fillStyle = '#ffd27a';
+      ctx.save();
+      ctx.translate(sx(charge.droppedAt.x), sy(charge.droppedAt.z));
+      ctx.rotate(Math.PI / 4);
+      ctx.fillRect(-3, -3, 6, 6);
+      ctx.restore();
+    }
+    // Player arrow, rotated by yaw (north is up).
+    const px = sx(playerState.position.x);
+    const py = sy(playerState.position.z);
+    ctx.save();
+    ctx.translate(px, py);
+    ctx.rotate(-playerState.yaw + Math.PI);
+    ctx.fillStyle = '#f5efe2';
+    ctx.beginPath();
+    ctx.moveTo(0, -6); ctx.lineTo(4, 5); ctx.lineTo(-4, 5); ctx.closePath();
+    ctx.fill();
+    ctx.restore();
   }
 
   return {
@@ -82,25 +160,42 @@ export function createHud() {
       setText(moneyValue, `$${money}`, 'money');
       setText(buyMoney, `$${money}`, 'buymoney');
     },
+    setCharge(carrying) {
+      if (!chargeTag) return;
+      chargeTag.hidden = !carrying;
+    },
     setTimer(seconds, phase) {
       const safe = Math.max(0, Math.ceil(seconds));
       setText(timerValue, `${Math.floor(safe / 60)}:${String(safe % 60).padStart(2, '0')}`, 'timer');
       setText(phaseLabel, phase, 'phase');
       timerValue.classList.toggle('urgent', seconds <= 10 && phase === 'ROUND');
     },
-    setScore(vanguard, ember, round) {
-      setText(scoreVanguard, String(vanguard), 'sv');
-      setText(scoreEmber, String(ember), 'se');
+    setScore(helios, umbra, round) {
+      setText(scoreHelios, String(helios), 'sh');
+      setText(scoreUmbra, String(umbra), 'su');
       setText(roundValue, `ROUND ${round}`, 'round');
     },
-    setCapture(progress, label) {
+    setAlive(helios, umbra) {
+      setText(aliveHelios, '●'.repeat(Math.max(0, helios)), 'ah');
+      setText(aliveUmbra, '●'.repeat(Math.max(0, umbra)), 'au');
+    },
+    setProgress(progress, label) {
       if (progress === null) {
-        captureWrap.hidden = true;
+        progressWrap.hidden = true;
         return;
       }
-      captureWrap.hidden = false;
-      captureBar.style.width = `${Math.round(progress * 100)}%`;
-      setText(captureLabel, label, 'caplabel');
+      progressWrap.hidden = false;
+      progressBar.style.width = `${Math.round(progress * 100)}%`;
+      setText(progressLabel, label, 'proglabel');
+    },
+    setBomb(secondsLeft, site) {
+      if (secondsLeft === null) {
+        bombWrap.hidden = true;
+        return;
+      }
+      bombWrap.hidden = false;
+      bombBar.style.width = `${Math.max(0, Math.min(100, (secondsLeft / 35) * 100))}%`;
+      setText(bombLabel, `CHARGE LIVE AT ${site} — ${Math.ceil(secondsLeft)}s`, 'bomblabel');
     },
     hitMarker(killed, holdMs = 90) {
       hitmarker.classList.add('on');
@@ -122,6 +217,14 @@ export function createHud() {
       killfeed.prepend(entry);
       while (killfeed.children.length > 4) killfeed.removeChild(killfeed.lastChild);
       setTimeout(() => entry.remove(), 6000);
+    },
+    radio(text, team) {
+      const entry = document.createElement('div');
+      entry.className = `radio-entry ${team === 'helios' ? 'helios' : 'umbra'}`;
+      entry.textContent = text;
+      radioFeed.prepend(entry);
+      while (radioFeed.children.length > 3) radioFeed.removeChild(radioFeed.lastChild);
+      setTimeout(() => entry.remove(), 7000);
     },
     banner(text, sub, holdMs = 2600) {
       bannerText.textContent = text;
@@ -175,12 +278,13 @@ export function createHud() {
     onDeploy(handler) {
       deployBtn.addEventListener('click', handler);
     },
-    showMatchEnd(vanguard, ember) {
-      title.textContent = vanguard > ember ? 'VANGUARD TAKES THE YARD' : 'EMBER TAKES THE YARD';
-      copy.textContent = `Final score — Vanguard ${vanguard} : ${ember} Ember. Play again to run it back.`;
+    showMatchEnd(helios, umbra, kills, deaths) {
+      title.textContent = helios > umbra ? 'HELIOS TAKES ARRAY NINE' : 'UMBRA HOLDS ARRAY NINE';
+      copy.textContent = `Final score — HELIOS ${helios} : ${umbra} UMBRA. Your line: ${kills} eliminations, ${deaths} deaths. Play again to run it back.`;
       play.textContent = 'Play again';
       overlay.hidden = false;
       play.focus();
     },
+    drawRadar,
   };
 }
