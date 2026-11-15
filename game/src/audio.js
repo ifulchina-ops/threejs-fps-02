@@ -1,7 +1,8 @@
-// SOLSTICE — all sound is synthesized with WebAudio: no audio files, no network.
-// Gunfire per weapon class, plant/defuse beeps, round stingers, radio blips and
-// the accelerating fuse beep of a planted charge. Everything is a short envelope
-// over noise or an oscillator, so it stays cheap and reliable.
+// KESTREL — all sound is synthesized with WebAudio: no audio files, no
+// network. Gunfire per weapon class, grenade pins and pops, plant/defuse
+// beeps, round stingers, radio blips and the accelerating fuse beep of a
+// planted core. Everything is a short envelope over noise or an oscillator,
+// so it stays cheap and reliable.
 export function createAudio() {
   let ctx = null;
   let master = null;
@@ -143,6 +144,21 @@ export function createAudio() {
     explosion() {
       burst({ frequency: 90, duration: 0.9, type: 'sawtooth', gain: 0.4, slideTo: 30, noise: true });
       burst({ frequency: 60, duration: 1.2, type: 'sine', gain: 0.3, slideTo: 25 });
+    },
+    grenadePin() {
+      burst({ frequency: 2200, duration: 0.05, type: 'square', gain: 0.1 });
+    },
+    grenadeThrow() {
+      burst({ frequency: 400, duration: 0.12, type: 'sine', gain: 0.1, slideTo: 200 });
+    },
+    grenadePop() {
+      burst({ frequency: 500, duration: 0.35, type: 'sawtooth', gain: 0.3, slideTo: 80, noise: true });
+    },
+    flashRing() {
+      burst({ frequency: 3200, duration: 0.8, type: 'sine', gain: 0.08, slideTo: 2400 });
+    },
+    smokeHiss() {
+      burst({ frequency: 800, duration: 0.9, type: 'triangle', gain: 0.08, slideTo: 300, noise: true });
     },
   };
 }

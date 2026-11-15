@@ -1,13 +1,15 @@
-// SOLSTICE — a round-based tactical FPS at Array Nine (Node 22, standard library
-// only): the game is this directory's game/ folder, plain static files the browser
-// loads as ES modules with three.js 0.187.0 from an import map, and this program
-// hands it in. It copies game/ and screenshots/ from beside this file to /output
-// and writes /output/dossier.json, the summary the judge reads, with the vendored
-// make.fun library. The game itself lives in game/src/main.js; this file only
-// packages it for the grader, so it stays short on purpose.
+// KESTREL — a round-based tactical FPS at High Observatory (Node 22, standard
+// library only): the game is this directory's game/ folder, plain static files
+// the browser loads as ES modules with three.js 0.187.0 from an import map,
+// and this program hands it in. It copies game/ and screenshots/ from beside
+// this file to /output and writes /output/dossier.json, the summary the judge
+// reads, with the vendored make.fun library. The game itself lives in
+// game/src/main.js; this file only packages it for the grader, so it stays
+// short on purpose.
 //
-// The entry: 5v5 HELIOS vs UMBRA, round-based, buy economy, plant/defuse the
-// Surge Charge at sites A/B, team-plan bots with radio callouts.
+// The entry: 5v5 AURORA vs WARDEN, round-based, buy economy, grenades
+// (HE / smoke / flash), plant/defuse the Pulse Core at sites A/B, team-plan
+// bots with radio callouts that hear gunshots and footsteps.
 //
 // Serve it locally with `node serve.ts`, then open http://localhost:8080.
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:

@@ -1,18 +1,20 @@
-// SOLSTICE — the DOM HUD: crosshair, hit marker, health, armour, money, ammo,
-// round timer, team scores, alive pips, plant/defuse progress, the bomb fuse bar,
-// killfeed, radio callouts, a live radar minimap, damage flash, and the overlays
-// (start, buy, paused, dead, match end). It never touches the simulation;
-// main.js pushes numbers in and reads callbacks out.
+// KESTREL — the DOM HUD: crosshair, hit marker, health, armour, money, ammo,
+// grenade slots, round timer, team scores, alive pips, plant/defuse progress,
+// the bomb fuse bar, killfeed, radio callouts, a live radar minimap, damage
+// flash, flashbang whiteout, and the overlays (start, buy, paused, dead, match
+// end). It never touches the simulation; main.js pushes numbers in and reads
+// callbacks out.
 import { WEAPONS, BUY_ORDER, ARMOR_PRICE } from './weapons.js';
+import { GRENADES, GRENADE_ORDER } from './grenades.js';
 
 const COPY = {
   start: {
-    title: 'SOLSTICE',
-    copy: 'A round-based tactical FPS at Array Nine. HELIOS vs UMBRA, first to 5 rounds — plant the Surge Charge at A or B, or eliminate the other team.',
+    title: 'KESTREL',
+    copy: 'A round-based tactical FPS at High Observatory. AURORA vs WARDEN, first to 5 rounds — plant the Pulse Core at A or B, or eliminate the other team. Buy grenades: smoke cuts sightlines, flash blinds, HE clears rooms.',
     action: 'Deploy',
   },
   paused: {
-    title: 'SOLSTICE',
+    title: 'KESTREL',
     copy: 'Paused. Click to resume.',
     action: 'Resume',
   },
@@ -38,11 +40,11 @@ export function createHud() {
   const moneyValue = $('money-value');
   const chargeTag = $('charge-tag');
   const timerValue = $('timer-value');
-  const scoreHelios = $('score-helios');
-  const scoreUmbra = $('score-umbra');
+  const scoreAurora = $('score-aurora');
+  const scoreWarden = $('score-warden');
   const roundValue = $('round-value');
-  const aliveHelios = $('alive-helios');
-  const aliveUmbra = $('alive-umbra');
+  const aliveAurora = $('alive-aurora');
+  const aliveWarden = $('alive-warden');
   const hitmarker = $('hitmarker');
   const crosshair = $('crosshair');
   const killfeed = $('killfeed');
@@ -57,11 +59,14 @@ export function createHud() {
   const bombBar = $('bomb-bar');
   const bombLabel = $('bomb-label');
   const damageFlash = $('damage-flash');
+  const flashOverlay = $('flash-overlay');
+  const scopeOverlay = $('scope-overlay');
   const buyPanel = $('buy-panel');
   const buyList = $('buy-list');
   const buyMoney = $('buy-money');
   const deployBtn = $('deploy');
   const phaseLabel = $('phase-label');
+  const grenadeSlots = $('grenade-slots');
   const radarCanvas = $('radar-canvas');
   const radarCtx = radarCanvas ? radarCanvas.getContext('2d') : null;
   let hitTimer = 0;
@@ -82,28 +87,28 @@ export function createHud() {
     const H = radarCanvas.height;
     const ctx = radarCtx;
     ctx.clearRect(0, 0, W, H);
-    ctx.fillStyle = 'rgba(18,16,12,0.78)';
+    ctx.fillStyle = 'rgba(16,20,32,0.82)';
     ctx.fillRect(0, 0, W, H);
-    const sx = (x) => (x + 24) / 48 * W;
-    const sy = (z) => (z + 20) / 40 * H;
+    const sx = (x) => (x + 26) / 52 * W;
+    const sy = (z) => (z + 22) / 44 * H;
     // Sites.
     ctx.strokeStyle = '#ff9a2e';
     ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.arc(sx(-14), sy(-11), 7, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(sx(-15), sy(-12), 7, 0, Math.PI * 2); ctx.stroke();
     ctx.fillStyle = '#ff9a2e';
     ctx.font = 'bold 9px system-ui, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('A', sx(-14), sy(-11) + 3);
-    ctx.strokeStyle = '#2ed3c6';
-    ctx.beginPath(); ctx.arc(sx(14), sy(-11), 7, 0, Math.PI * 2); ctx.stroke();
-    ctx.fillStyle = '#2ed3c6';
-    ctx.fillText('B', sx(14), sy(-11) + 3);
+    ctx.fillText('A', sx(-15), sy(-12) + 3);
+    ctx.strokeStyle = '#4fd8e8';
+    ctx.beginPath(); ctx.arc(sx(15), sy(-12), 7, 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = '#4fd8e8';
+    ctx.fillText('B', sx(15), sy(-12) + 3);
     // Teammates + heard enemies.
     for (const bot of bots) {
       if (!bot.alive) continue;
       const x = sx(bot.body.position.x);
       const y = sy(bot.body.position.z);
-      if (bot.team === 'helios') {
+      if (bot.team === 'aurora') {
         ctx.fillStyle = '#ffb020';
         ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fill();
       } else if (time - (bot.lastShotAt || -99) < 1.5) {
@@ -111,9 +116,9 @@ export function createHud() {
         ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fill();
       }
     }
-    // The charge: blinking when planted, steady when dropped.
+    // The core: blinking when planted, steady when dropped.
     if (charge.planted && charge.site) {
-      const p = charge.site === 'A' ? [-14, -11] : [14, -11];
+      const p = charge.site === 'A' ? [-15, -12] : [15, -12];
       if (Math.floor(time * 2) % 2 === 0) {
         ctx.fillStyle = '#ff2020';
         ctx.save();
@@ -136,7 +141,7 @@ export function createHud() {
     ctx.save();
     ctx.translate(px, py);
     ctx.rotate(-playerState.yaw + Math.PI);
-    ctx.fillStyle = '#f5efe2';
+    ctx.fillStyle = '#f2f5fb';
     ctx.beginPath();
     ctx.moveTo(0, -6); ctx.lineTo(4, 5); ctx.lineTo(-4, 5); ctx.closePath();
     ctx.fill();
@@ -164,20 +169,41 @@ export function createHud() {
       if (!chargeTag) return;
       chargeTag.hidden = !carrying;
     },
+    setGrenades(counts, selected) {
+      if (!grenadeSlots) return;
+      const key = JSON.stringify([counts, selected]);
+      if (last.grenades === key) return;
+      last.grenades = key;
+      grenadeSlots.innerHTML = '';
+      for (const id of GRENADE_ORDER) {
+        const slot = document.createElement('span');
+        slot.className = `grenade-slot${id === selected ? ' selected' : ''}${counts[id] > 0 ? '' : ' empty'}`;
+        slot.textContent = `${GRENADES[id].name} ×${counts[id]}`;
+        grenadeSlots.appendChild(slot);
+      }
+    },
+    setFlash(strength) {
+      if (!flashOverlay) return;
+      flashOverlay.style.opacity = String(Math.max(0, Math.min(1, strength)));
+    },
+    setScope(on) {
+      if (!scopeOverlay) return;
+      scopeOverlay.hidden = !on;
+    },
     setTimer(seconds, phase) {
       const safe = Math.max(0, Math.ceil(seconds));
       setText(timerValue, `${Math.floor(safe / 60)}:${String(safe % 60).padStart(2, '0')}`, 'timer');
       setText(phaseLabel, phase, 'phase');
       timerValue.classList.toggle('urgent', seconds <= 10 && phase === 'ROUND');
     },
-    setScore(helios, umbra, round) {
-      setText(scoreHelios, String(helios), 'sh');
-      setText(scoreUmbra, String(umbra), 'su');
+    setScore(aurora, warden, round) {
+      setText(scoreAurora, String(aurora), 'sh');
+      setText(scoreWarden, String(warden), 'su');
       setText(roundValue, `ROUND ${round}`, 'round');
     },
-    setAlive(helios, umbra) {
-      setText(aliveHelios, '●'.repeat(Math.max(0, helios)), 'ah');
-      setText(aliveUmbra, '●'.repeat(Math.max(0, umbra)), 'au');
+    setAlive(aurora, warden) {
+      setText(aliveAurora, '●'.repeat(Math.max(0, aurora)), 'ah');
+      setText(aliveWarden, '●'.repeat(Math.max(0, warden)), 'au');
     },
     setProgress(progress, label) {
       if (progress === null) {
@@ -195,7 +221,7 @@ export function createHud() {
       }
       bombWrap.hidden = false;
       bombBar.style.width = `${Math.max(0, Math.min(100, (secondsLeft / 35) * 100))}%`;
-      setText(bombLabel, `CHARGE LIVE AT ${site} — ${Math.ceil(secondsLeft)}s`, 'bomblabel');
+      setText(bombLabel, `CORE LIVE AT ${site} — ${Math.ceil(secondsLeft)}s`, 'bomblabel');
     },
     hitMarker(killed, holdMs = 90) {
       hitmarker.classList.add('on');
@@ -220,7 +246,7 @@ export function createHud() {
     },
     radio(text, team) {
       const entry = document.createElement('div');
-      entry.className = `radio-entry ${team === 'helios' ? 'helios' : 'umbra'}`;
+      entry.className = `radio-entry ${team === 'aurora' ? 'aurora' : 'warden'}`;
       entry.textContent = text;
       radioFeed.prepend(entry);
       while (radioFeed.children.length > 3) radioFeed.removeChild(radioFeed.lastChild);
@@ -250,7 +276,7 @@ export function createHud() {
     onPlay(handler) {
       play.addEventListener('click', handler);
     },
-    showBuy(money, ownedWeapon, hasArmor, onBuy) {
+    showBuy(money, ownedWeapon, hasArmor, grenadeCounts, onBuy) {
       buyPanel.hidden = false;
       setText(buyMoney, `$${money}`, 'buymoney2');
       buyList.innerHTML = '';
@@ -271,6 +297,17 @@ export function createHud() {
       armorRow.innerHTML = `<span class="buy-key">6</span><span class="buy-name">Kevlar Vest — 50 armour</span><span class="buy-price">$${ARMOR_PRICE}</span>${hasArmor ? '<span class="buy-tag">EQUIPPED</span>' : ''}`;
       armorRow.addEventListener('click', () => onBuy('armor'));
       buyList.appendChild(armorRow);
+      GRENADE_ORDER.forEach((id, index) => {
+        const def = GRENADES[id];
+        const owned = grenadeCounts[id] || 0;
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.className = 'buy-row grenade';
+        row.disabled = owned >= def.max || money < def.price;
+        row.innerHTML = `<span class="buy-key">${7 + index}</span><span class="buy-name">${def.name} — ${def.blurb}</span><span class="buy-price">${owned >= def.max ? 'MAX' : `$${def.price}`}</span>${owned > 0 ? `<span class="buy-tag">×${owned}</span>` : ''}`;
+        row.addEventListener('click', () => onBuy(`grenade:${id}`));
+        buyList.appendChild(row);
+      });
     },
     hideBuy() {
       buyPanel.hidden = true;
@@ -278,9 +315,9 @@ export function createHud() {
     onDeploy(handler) {
       deployBtn.addEventListener('click', handler);
     },
-    showMatchEnd(helios, umbra, kills, deaths) {
-      title.textContent = helios > umbra ? 'HELIOS TAKES ARRAY NINE' : 'UMBRA HOLDS ARRAY NINE';
-      copy.textContent = `Final score — HELIOS ${helios} : ${umbra} UMBRA. Your line: ${kills} eliminations, ${deaths} deaths. Play again to run it back.`;
+    showMatchEnd(aurora, warden, kills, deaths) {
+      title.textContent = aurora > warden ? 'AURORA TAKES THE OBSERVATORY' : 'WARDEN HOLDS THE OBSERVATORY';
+      copy.textContent = `Final score — AURORA ${aurora} : ${warden} WARDEN. Your line: ${kills} eliminations, ${deaths} deaths. Play again to run it back.`;
       play.textContent = 'Play again';
       overlay.hidden = false;
       play.focus();

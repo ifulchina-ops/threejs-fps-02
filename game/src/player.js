@@ -1,6 +1,7 @@
-// SOLSTICE — player movement: acceleration, friction, gravity, crouch and jump,
+// KESTREL — movement: acceleration, friction, gravity, crouch and jump,
 // resolved as a box against the world's colliders one axis at a time, so a wall
-// never swallows the player. The bots share the same body through makeBody.
+// never swallows the player. The bots share the same body through makeBody, so
+// they move, collide and climb steps under exactly the same rules as the player.
 import * as THREE from 'three';
 
 const RADIUS = 0.34;
@@ -15,7 +16,7 @@ const GROUND_ACCEL = 44;
 const AIR_ACCEL = 9;
 const FRICTION = 9;
 const GRAVITY = 20;
-const JUMP_SPEED = 6.4;
+const JUMP_SPEED = 6.6;
 
 export function makeBody(colliders, x, z) {
   return {
@@ -31,6 +32,7 @@ export function makeBody(colliders, x, z) {
   };
 }
 
+// Module-level scratch, so the hot loop never allocates.
 const probe = new THREE.Box3();
 const wish = new THREE.Vector3();
 
@@ -46,7 +48,8 @@ export function stepBody(body, dt, keys, aiming) {
   if (crouching && !body.crouching) {
     body.crouching = true;
     body.height = CROUCH_HEIGHT;
-  } else if (!crouching && body.crouching && !overlaps(body, body.position.x, body.position.y, body.position.z, STAND_HEIGHT, 0.02)) {
+  } else if (!crouching && body.crouching
+    && !overlaps(body, body.position.x, body.position.y, body.position.z, STAND_HEIGHT, 0.02)) {
     body.crouching = false;
     body.height = STAND_HEIGHT;
   }
@@ -78,6 +81,7 @@ export function stepBody(body, dt, keys, aiming) {
   }
   body.velocity.y -= GRAVITY * dt;
 
+  // Axis-separated resolution: X, then Z, then Y, so sliding along a wall works.
   const nextX = body.position.x + body.velocity.x * dt;
   if (!overlaps(body, nextX, body.position.y, body.position.z, body.height, 0.04)) body.position.x = nextX;
   else body.velocity.x = 0;
@@ -105,8 +109,8 @@ export function stepBody(body, dt, keys, aiming) {
 }
 
 export function createPlayer(colliders) {
-  const body = makeBody(colliders, 0, 17);
-  body.yaw = 0; // face north, toward the UMBRA spawn and the two sites.
+  const body = makeBody(colliders, 0, 19);
+  body.yaw = 0; // face north, toward the WARDEN spawn and the two sites.
 
   function look(dx, dy, sensitivity = 0.0022) {
     body.yaw -= dx * sensitivity;
@@ -127,6 +131,15 @@ export function createPlayer(colliders) {
     recoil,
     groundSpeed() {
       return Math.hypot(body.velocity.x, body.velocity.z);
+    },
+    // How far this body's movement can be heard: sprinting is loud, walking
+    // is quiet, crouching is near-silent. Bots use it to investigate.
+    noiseRadius() {
+      if (!body.onGround) return 0;
+      const speed = Math.hypot(body.velocity.x, body.velocity.z);
+      if (speed < 0.5) return 0;
+      if (body.crouching) return 1.5;
+      return speed > 4.5 ? 9 : 4;
     },
     reset(x, z, yaw) {
       body.position.set(x, 0, z);

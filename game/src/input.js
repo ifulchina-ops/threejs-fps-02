@@ -1,9 +1,17 @@
-// SOLSTICE — keyboard and mouse: pointer lock, look deltas, fire / aim state,
-// and the interact key (E) the plant/defuse objective uses. One module, so the
+// KESTREL — keyboard and mouse: pointer lock, look deltas, fire / aim state,
+// the interact key (E) the plant/defuse objective uses, and the grenade keys
+// (Q cycles the grenade type, G throws the selected one). One module, so the
 // game loop never touches DOM events directly.
 export function createInput(element, onLockChange) {
   const keys = new Set();
-  const state = { keys, aiming: false, firing: false, interact: false };
+  const state = {
+    keys,
+    aiming: false,
+    firing: false,
+    interact: false,
+    throwPressed: false,
+    cyclePressed: false,
+  };
   let lookX = 0;
   let lookY = 0;
 
@@ -29,8 +37,12 @@ export function createInput(element, onLockChange) {
     if (locked()) event.preventDefault();
   });
   window.addEventListener('keydown', (event) => {
+    // Ignore repeats: a held G must throw exactly one grenade.
+    if (event.repeat) return;
     keys.add(event.code);
     if (event.code === 'KeyE') state.interact = true;
+    if (event.code === 'KeyG') state.throwPressed = true;
+    if (event.code === 'KeyQ') state.cyclePressed = true;
     if (event.code === 'Space') event.preventDefault();
   });
   window.addEventListener('keyup', (event) => {
@@ -42,6 +54,8 @@ export function createInput(element, onLockChange) {
     state.firing = false;
     state.aiming = false;
     state.interact = false;
+    state.throwPressed = false;
+    state.cyclePressed = false;
   });
   document.addEventListener('pointerlockchange', () => {
     if (!locked()) {
@@ -58,6 +72,16 @@ export function createInput(element, onLockChange) {
       lookX = 0;
       lookY = 0;
       return out;
+    },
+    takeThrow() {
+      const pressed = state.throwPressed;
+      state.throwPressed = false;
+      return pressed;
+    },
+    takeCycle() {
+      const pressed = state.cyclePressed;
+      state.cyclePressed = false;
+      return pressed;
     },
     requestLock() {
       if (!locked()) element.requestPointerLock();

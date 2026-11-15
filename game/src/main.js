@@ -1,14 +1,39 @@
-// SOLSTICE — boot, the one loop, and the match: 15-second buy phases, 100-second
-// rounds, first to 5, won by elimination, by detonating the planted Surge Charge,
-// or by defusing it. 5v5: the player plus four HELIOS bots against five UMBRA bots.
-// ?shot=start|buy|play|end with &seed=N stages a deterministic frame for a capture,
-// renders it twice, then freezes it and sets window.__shotReady.
+// KESTREL — High Observatory. A round-based tactical FPS in the style
+// Counter-Strike made famous, built on three.js 0.187.0 from static files.
+//
+// What the game is, in one place (for the reader of this dossier):
+//   5v5, first to 5 rounds (max 9): AURORA (the player + 4 bots) attacks,
+//   WARDEN (5 bots) defends. Rounds end by elimination, by detonating the
+//   planted Pulse Core, or by defusing it. 15 s buy phases, 100 s rounds.
+//   Buy economy: $800 start, kill +$300, plant +$300, win +$3,250, loss
+//   $1,400 + $500 per consecutive loss. Five weapons (pistol, SMG, shotgun,
+//   rifle, sniper) + Kevlar, and three grenades — HE, smoke and flash — all
+//   bought in the buy menu and thrown with G (Q cycles the type).
+//   Gunplay: raycast hits against head/torso meshes (3x headshots, 4x on the
+//   sniper), damage falloff, spread that grows with movement and spray heat
+//   and shrinks when still, crouched or aiming, and recoil climb that
+//   recovers. Movement: acceleration, friction, gravity, crouch, jump, and
+//   axis-separated collision with the map, shared by player and bots.
+//   Bots: six team plans (rush, split, slow, overlook, fake) walked as a
+//   unit with radio callouts; defenders hold sites and rotate on a plant;
+//   bots hear gunshots and footsteps and investigate, buy their own weapons
+//   with round money, throw smoke on executes and flash toward contact, and
+//   cannot see through smoke or while flash-blinded.
+//   The map: an original alpine observatory at blue hour, 52 x 44 m — two
+//   sites (Dome, Array), three lanes, flank gaps, and an elevated Overlook
+//   with sightlines over both sites. No network, no assets: geometry plus
+//   procedural canvas textures and synthesized WebAudio.
+//
+// ?shot=start|buy|play|end with &seed=N stages a deterministic frame for a
+// capture, renders it twice, then freezes it and sets window.__shotReady.
 import * as THREE from 'three';
 import { PALETTE } from './palette.js';
 import { createWorld } from './world.js';
 import { createInput } from './input.js';
 import { createPlayer } from './player.js';
 import { createWeapon, WEAPONS, ARMOR_PRICE } from './weapons.js';
+import { createGrenades, GRENADES, GRENADE_ORDER } from './grenades.js';
+import { createEffects } from './effects.js';
 import { createBots } from './bots.js';
 import { createHud } from './hud.js';
 import { createAudio } from './audio.js';
@@ -55,8 +80,8 @@ document.getElementById('game').appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(PALETTE.sky);
-scene.fog = new THREE.Fog(new THREE.Color(PALETTE.fog), 35, 95);
-const camera = new THREE.PerspectiveCamera(74, window.innerWidth / window.innerHeight, 0.05, 180);
+scene.fog = new THREE.Fog(new THREE.Color(PALETTE.fog), 32, 95);
+const camera = new THREE.PerspectiveCamera(74, window.innerWidth / window.innerHeight, 0.05, 200);
 scene.add(camera);
 
 const audio = createAudio();
@@ -64,14 +89,18 @@ const world = createWorld(scene);
 const hud = createHud();
 const player = createPlayer(world.colliders);
 const weapon = createWeapon(camera);
+const effects = createEffects(scene);
 const input = createInput(renderer.domElement, onLockChange);
 
 const raycaster = new THREE.Raycaster();
 raycaster.far = 120;
 const direction = new THREE.Vector3();
 const muzzleWorld = new THREE.Vector3();
+const eyeWorld = new THREE.Vector3();
+const throwDir = new THREE.Vector3();
+const pelletDir = new THREE.Vector3();
 
-// ---- The Surge Charge: who holds it, where it is, whether it is live ----
+// ---- The Pulse Core: who holds it, where it is, whether it is live ----
 const charge = {
   holder: 'player', // 'player' | bot | null
   droppedAt: null,
@@ -81,6 +110,30 @@ const charge = {
   defuseProgress: 0,
   fuseLeft: FUSE_SECONDS,
 };
+
+// ---- Grenade inventory: what the player owns and has selected ----
+const grenadeCounts = { he: 0, smoke: 0, flash: 0 };
+let grenadeSelected = 'he';
+
+const grenades = createGrenades(scene, world.colliders, world.shootables, {
+  onThrow(type, thrower) {
+    audio.grenadeThrow();
+    if (thrower === 'player') audio.grenadePin();
+  },
+  onSmoke() {
+    audio.smokeHiss();
+  },
+  onFlash(position, radius) {
+    audio.flashRing();
+    audio.grenadePop();
+    flashPlayer(position, radius);
+    bots.flashBots(position, radius, elapsed);
+  },
+  onExplode(position, radius, damage, thrower) {
+    audio.explosion();
+    explodeAt(position, radius, damage, thrower);
+  },
+});
 
 const bots = createBots(scene, world.colliders, world.shootables, {
   damagePlayer(damage, fromBot) { damagePlayer(damage, fromBot); },
@@ -93,18 +146,24 @@ const bots = createBots(scene, world.colliders, world.shootables, {
     charge.holder = bot;
     charge.droppedAt = null;
     bots.setCarrier(bot);
-    hud.radio(`${bot.name}: Got the charge — heading to ${bots.plan.target}!`, 'helios');
+    hud.radio(`${bot.name}: Got the core — heading to ${bots.plan.target}!`, 'aurora');
   },
   onPlantStart(bot, site) {
-    hud.radio(`${bot.name}: Planting at ${site} — cover me!`, 'helios');
+    hud.radio(`${bot.name}: Planting at ${site} — cover me!`, 'aurora');
   },
+  throwGrenade(type, origin, direction, bot) {
+    grenades.throw(type, origin, direction, bot);
+  },
+  smokeBlocks(from, to) { return grenades.blockedBySmoke(from, to); },
+  tracer(from, to) { effects.tracer(from, to); },
+  noise(position, radius, team, time) { bots.hearNoise(position, radius, team, time); },
 });
 const shootables = world.shootables.concat(bots.hitMeshes);
 
 // ---- Match state ----
 let phase = 'menu';
 let round = 1;
-let score = { helios: 0, umbra: 0 };
+let score = { aurora: 0, warden: 0 };
 let money = 800;
 let health = 100;
 let armor = 0;
@@ -124,7 +183,10 @@ let fovTarget = 74;
 let staging = false;
 let lastBeepAt = 0;
 let lastPlantTickAt = 0;
+let lastNoiseAt = 0;
 let currentPlan = null;
+let flashPeak = 0;
+let flashUntil = 0;
 
 const body = player.state;
 
@@ -147,22 +209,26 @@ function refreshHud() {
   hud.setAmmo(weapon.state.mag, weapon.state.reserve, weapon.state.weaponId);
   hud.setHealth(health, armor);
   hud.setMoney(money);
-  hud.setScore(score.helios, score.umbra, round);
-  hud.setAlive(bots.aliveCount('helios') + (playerAlive ? 1 : 0), bots.aliveCount('umbra'));
+  hud.setGrenades(grenadeCounts, grenadeSelected);
+  hud.setScore(score.aurora, score.warden, round);
+  hud.setAlive(bots.aliveCount('aurora') + (playerAlive ? 1 : 0), bots.aliveCount('warden'));
   hud.setCharge(charge.holder === 'player' && playerAlive);
   if (phase === 'buy') hud.setTimer(buyTimer, 'BUY');
-  else if (charge.planted) hud.setTimer(charge.fuseLeft, 'BOMB');
+  else if (charge.planted) hud.setTimer(charge.fuseLeft, 'CORE');
   else hud.setTimer(roundTimer, phase === 'live' ? 'ROUND' : phase.toUpperCase());
   hud.setBomb(charge.planted ? charge.fuseLeft : null, charge.site);
 }
 
 function startMatch() {
-  score = { helios: 0, umbra: 0 };
+  score = { aurora: 0, warden: 0 };
   round = 1;
   money = 800;
   kills = 0;
   deaths = 0;
   lossStreak = 0;
+  grenadeCounts.he = 0;
+  grenadeCounts.smoke = 0;
+  grenadeCounts.flash = 0;
   startBuy();
 }
 
@@ -179,15 +245,19 @@ function startBuy() {
   charge.defuseProgress = 0;
   charge.fuseLeft = FUSE_SECONDS;
   world.chargeGroup.visible = false;
-  player.reset(0, 17, 0);
+  grenades.reset();
+  player.reset(0, 19, 0);
   health = 100;
   playerAlive = true;
+  flashPeak = 0;
+  flashUntil = 0;
+  hud.setFlash(0);
   weapon.refill();
   hud.hideOverlay();
   hud.hideBanner();
   hud.setProgress(null);
   hud.setBomb(null);
-  hud.showBuy(money, weapon.state.weaponId, armor > 0, buy);
+  hud.showBuy(money, weapon.state.weaponId, armor > 0, grenadeCounts, buy);
   hud.banner(`PLAN: ${currentPlan.name}`, currentPlan.callout, 3000);
   refreshHud();
 }
@@ -198,7 +268,7 @@ function startRound() {
   hud.hideBuy();
   hud.hideOverlay();
   audio.roundStart();
-  hud.banner(`ROUND ${round}`, `Plant the charge at A or B — or eliminate UMBRA`, 2000);
+  hud.banner(`ROUND ${round}`, `Plant the core at A or B — or eliminate WARDEN`, 2000);
   refreshHud();
   if (!shot) input.requestLock();
 }
@@ -207,7 +277,7 @@ function endRound(winner, reason) {
   if (phase !== 'live' || staging) return;
   phase = 'roundEnd';
   roundEndAt = elapsed + 4;
-  const playerWon = winner === 'helios';
+  const playerWon = winner === 'aurora';
   if (winner) score[winner] += 1;
   if (playerWon) {
     money += WIN_REWARD;
@@ -216,9 +286,10 @@ function endRound(winner, reason) {
     money += Math.min(LOSS_MAX, LOSS_BASE + lossStreak * LOSS_STEP);
     lossStreak += 1;
   }
+  bots.payRound(winner);
   if (winner) audio.roundWin();
   else audio.roundLose();
-  const label = winner === 'helios' ? 'HELIOS WINS THE ROUND' : winner === 'umbra' ? 'UMBRA WINS THE ROUND' : 'ROUND DRAW';
+  const label = winner === 'aurora' ? 'AURORA WINS THE ROUND' : winner === 'warden' ? 'WARDEN WINS THE ROUND' : 'ROUND DRAW';
   hud.banner(label, reason, 3600);
   hud.setProgress(null);
   refreshHud();
@@ -228,7 +299,7 @@ function endMatch() {
   phase = 'matchEnd';
   if (document.pointerLockElement) document.exitPointerLock();
   hud.hideBuy();
-  hud.showMatchEnd(score.helios, score.umbra, kills, deaths);
+  hud.showMatchEnd(score.aurora, score.warden, kills, deaths);
   refreshHud();
 }
 
@@ -239,6 +310,14 @@ function buy(id) {
     money -= ARMOR_PRICE;
     armor = 50;
     audio.buy();
+  } else if (id.startsWith('grenade:')) {
+    const type = id.slice('grenade:'.length);
+    const def = GRENADES[type];
+    if (!def || grenadeCounts[type] >= def.max || money < def.price) { audio.denied(); return; }
+    money -= def.price;
+    grenadeCounts[type] += 1;
+    grenadeSelected = type;
+    audio.buy();
   } else {
     const def = WEAPONS[id];
     if (!def) return;
@@ -248,7 +327,7 @@ function buy(id) {
     weapon.equip(id);
     audio.buy();
   }
-  hud.showBuy(money, weapon.state.weaponId, armor > 0, buy);
+  hud.showBuy(money, weapon.state.weaponId, armor > 0, grenadeCounts, buy);
   refreshHud();
 }
 
@@ -258,7 +337,7 @@ function dropCharge(at) {
   charge.droppedAt = at.clone();
   charge.droppedAt.y = 0;
   charge.plantProgress = 0;
-  hud.radio('Charge dropped — pick it up!', 'helios');
+  hud.radio('Core dropped — pick it up!', 'aurora');
 }
 
 function completePlant(site, byPlayer) {
@@ -274,18 +353,18 @@ function completePlant(site, byPlayer) {
   audio.planted();
   if (byPlayer) {
     money += PLANT_REWARD;
-    hud.radio('You: Charge planted — hold the site!', 'helios');
+    hud.radio('You: Core planted — hold the site!', 'aurora');
   } else {
-    hud.radio('Charge planted — hold the site!', 'helios');
+    hud.radio('Core planted — hold the site!', 'aurora');
   }
-  hud.banner(`CHARGE PLANTED AT ${site}`, 'UMBRA has 35 seconds to defuse it', 3000);
+  hud.banner(`CORE PLANTED AT ${site}`, 'WARDEN has 35 seconds to defuse it', 3000);
   refreshHud();
 }
 
 function onBotKilled(victim, attacker) {
   const attackerName = attacker === 'player' ? 'You' : attacker ? attacker.name : 'You';
-  hud.killfeed(`${attackerName}  ▸  ${victim.name}`, victim.team === 'umbra');
-  if (attacker === 'player' && victim.team === 'umbra') {
+  hud.killfeed(`${attackerName}  ▸  ${victim.name}`, victim.team === 'warden');
+  if (attacker === 'player' && victim.team === 'warden') {
     money += KILL_REWARD;
     kills += 1;
     audio.hit(true);
@@ -317,6 +396,78 @@ function damagePlayer(damage, fromBot) {
   }
 }
 
+// An HE detonation: damage falls off with distance and only reaches bodies
+// with line of sight to the blast, so cover saves. Friendly fire is off — a
+// blast only hurts the thrower's enemies — and the killfeed credit for a
+// grenade kill is paid once, by onBotKilled through damageBot's onKill.
+function explodeAt(position, radius, maxDamage, thrower) {
+  const throwerTeam = thrower === 'player' ? 'aurora' : thrower.team;
+  const eye = eyeWorld.copy(body.position);
+  eye.y = body.position.y + body.eye;
+  if (playerAlive && phase === 'live' && throwerTeam === 'warden') {
+    const dist = eye.distanceTo(position);
+    if (dist < radius && grenades.hasLineOfSight(position, eye)) {
+      const damage = maxDamage * (1 - (dist / radius) * 0.7);
+      damagePlayer(damage, thrower);
+    }
+  }
+  for (const bot of bots.bots) {
+    if (!bot.alive || bot.team === throwerTeam) continue;
+    const target = new THREE.Vector3(bot.body.position.x, bot.body.position.y + 1.2, bot.body.position.z);
+    const dist = target.distanceTo(position);
+    if (dist >= radius) continue;
+    if (!grenades.hasLineOfSight(position, target)) continue;
+    const damage = maxDamage * (1 - (dist / radius) * 0.7);
+    bots.damageBot(bot, damage, 'torso', thrower);
+  }
+}
+
+// A flashbang pop: the player is blinded by how close the pop is and how
+// squarely they face it; looking away or standing behind cover saves them.
+function flashPlayer(position, radius) {
+  if (!playerAlive || phase !== 'live') return;
+  const eye = eyeWorld.copy(body.position);
+  eye.y = body.position.y + body.eye;
+  const dist = eye.distanceTo(position);
+  if (dist > radius) return;
+  if (!grenades.hasLineOfSight(position, eye)) return;
+  camera.getWorldDirection(direction);
+  const toFlash = new THREE.Vector3().copy(position).sub(eye).normalize();
+  const facingFactor = Math.max(0, direction.dot(toFlash));
+  const strength = (1 - dist / radius) * (0.25 + 0.75 * facingFactor);
+  if (strength > 0.15) {
+    flashPeak = Math.max(flashPeak, strength);
+    flashUntil = elapsed + 0.6 + strength * 2.2;
+    audio.flashRing();
+  }
+}
+
+function throwPlayerGrenade() {
+  if (phase !== 'live' || !playerAlive) return;
+  if (grenadeCounts[grenadeSelected] <= 0) {
+    // Nothing of the selected type: fall back to any grenade owned.
+    const owned = GRENADE_ORDER.find((id) => grenadeCounts[id] > 0);
+    if (!owned) {
+      audio.denied();
+      return;
+    }
+    grenadeSelected = owned;
+  }
+  grenadeCounts[grenadeSelected] -= 1;
+  camera.getWorldDirection(throwDir);
+  eyeWorld.copy(body.position);
+  eyeWorld.y = body.position.y + body.eye;
+  eyeWorld.addScaledVector(throwDir, 0.5);
+  grenades.throw(grenadeSelected, eyeWorld, throwDir, 'player');
+  refreshHud();
+}
+
+function cycleGrenade() {
+  const index = GRENADE_ORDER.indexOf(grenadeSelected);
+  grenadeSelected = GRENADE_ORDER[(index + 1) % GRENADE_ORDER.length];
+  refreshHud();
+}
+
 function aimAt(point) {
   const dx = point.x - body.position.x;
   const dy = point.y - (body.position.y + body.eye);
@@ -338,19 +489,21 @@ function shoot(spread) {
   let hitAny = false;
   let killedAny = false;
   for (let pellet = 0; pellet < def.pellets; pellet += 1) {
-    const dir = direction.clone();
-    dir.x += (random() * 2 - 1) * spread;
-    dir.y += (random() * 2 - 1) * spread;
-    dir.z += (random() * 2 - 1) * spread;
-    dir.normalize();
+    pelletDir.copy(direction);
+    pelletDir.x += (random() * 2 - 1) * spread;
+    pelletDir.y += (random() * 2 - 1) * spread;
+    pelletDir.z += (random() * 2 - 1) * spread;
+    pelletDir.normalize();
     scene.updateMatrixWorld(true);
-    raycaster.set(camera.position, dir);
+    raycaster.set(camera.position, pelletDir);
     const hit = raycaster.intersectObjects(shootables, false)[0];
     const muzzle = muzzleWorld.copy(camera.position).addScaledVector(direction, 0.6);
     if (hit) {
-      bots.fireTracer(muzzle, hit.point);
+      effects.tracer(muzzle, hit.point);
       if (hit.object.userData.bot) {
         const bot = hit.object.userData.bot;
+        // Friendly fire is off: a teammate absorbs the round and nothing more.
+        if (bot.team === 'aurora') continue;
         const part = hit.object.userData.part;
         let damage = def.damage * (part === 'head' ? def.headMult : 1);
         if (hit.distance > def.range) damage *= 0.55;
@@ -359,14 +512,18 @@ function shoot(spread) {
         killedAny = killedAny || killed;
         hud.hitMarker(killed, shot ? 4000 : 90);
         if (!killed) audio.hit(false);
+      } else {
+        // A wall hit throws sparks back along the shot.
+        effects.impact(hit.point, pelletDir.clone().multiplyScalar(-1));
       }
     } else {
-      bots.fireTracer(muzzle, camera.position.clone().addScaledVector(dir, 60));
+      effects.tracer(muzzle, camera.position.clone().addScaledVector(pelletDir, 60));
     }
   }
   weapon.pullTrigger();
-  player.recoil(0.004 + def.kick, (random() * 2 - 1) * def.kick * 0.5);
+  player.recoil(def.climb + def.kick, (random() * 2 - 1) * def.kick * 0.5);
   audio.shot(def.id);
+  bots.hearNoise(body.position, 30, 'aurora', elapsed);
   refreshHud();
   return hitAny;
 }
@@ -374,21 +531,20 @@ function shoot(spread) {
 // Plant, defuse and fuse progress, advanced once per fixed step.
 function stepCharge(dt) {
   if (charge.planted) {
-    // A defuse channel wins the round for UMBRA; the fuse wins it for HELIOS.
     const defusing = bots.bots.some((b) => b.alive && b.defusing);
     if (defusing) {
       charge.defuseProgress = Math.min(1, charge.defuseProgress + dt / DEFUSE_SECONDS);
       if (elapsed >= lastPlantTickAt) { audio.defuseTick(); lastPlantTickAt = elapsed + 0.5; }
-      hud.setProgress(charge.defuseProgress, 'UMBRA DEFUSING THE CHARGE');
+      hud.setProgress(charge.defuseProgress, 'WARDEN DEFUSING THE CORE');
       if (charge.defuseProgress >= 1) {
         charge.planted = false;
         world.chargeGroup.visible = false;
-        endRound('umbra', 'UMBRA defused the charge.');
+        endRound('warden', 'WARDEN defused the core.');
         return;
       }
     } else {
       charge.defuseProgress = Math.max(0, charge.defuseProgress - dt / (DEFUSE_SECONDS * 2));
-      hud.setProgress(charge.defuseProgress > 0.02 ? charge.defuseProgress : null, 'UMBRA DEFUSING THE CHARGE');
+      hud.setProgress(charge.defuseProgress > 0.02 ? charge.defuseProgress : null, 'WARDEN DEFUSING THE CORE');
     }
     charge.fuseLeft -= dt;
     const interval = charge.fuseLeft > 10 ? 1 : 0.5;
@@ -399,7 +555,7 @@ function stepCharge(dt) {
     if (charge.fuseLeft <= 0) {
       audio.explosion();
       world.chargeGroup.visible = false;
-      endRound('helios', 'The charge detonated — the site is gone.');
+      endRound('aurora', 'The core detonated — the site is gone.');
     }
     return;
   }
@@ -410,7 +566,7 @@ function stepCharge(dt) {
   if (playerSite && input.state.interact && !input.state.firing) {
     charge.plantProgress = Math.min(1, charge.plantProgress + dt / PLANT_SECONDS);
     if (elapsed >= lastPlantTickAt) { audio.plantTick(); lastPlantTickAt = elapsed + 0.5; }
-    hud.setProgress(charge.plantProgress, `PLANTING CHARGE AT ${playerSite}`);
+    hud.setProgress(charge.plantProgress, `PLANTING CORE AT ${playerSite}`);
     if (charge.plantProgress >= 1) completePlant(playerSite, true);
   } else if (botPlanting) {
     charge.plantProgress = Math.min(1, charge.plantProgress + dt / PLANT_SECONDS);
@@ -420,18 +576,18 @@ function stepCharge(dt) {
   } else {
     charge.plantProgress = Math.max(0, charge.plantProgress - dt / (PLANT_SECONDS * 2));
     if (playerSite && charge.holder === 'player') {
-      hud.setProgress(charge.plantProgress > 0.02 ? charge.plantProgress : 0, `HOLD E — PLANT THE CHARGE AT ${playerSite}`);
+      hud.setProgress(charge.plantProgress > 0.02 ? charge.plantProgress : 0, `HOLD E — PLANT THE CORE AT ${playerSite}`);
     } else {
-      hud.setProgress(charge.plantProgress > 0.02 ? charge.plantProgress : null, 'PLANTING CHARGE');
+      hud.setProgress(charge.plantProgress > 0.02 ? charge.plantProgress : null, 'PLANTING CORE');
     }
   }
 
-  // The player can pick up a dropped charge by walking over it.
+  // The player can pick up a dropped core by walking over it.
   if (charge.holder === null && charge.droppedAt && playerAlive) {
     if (body.position.distanceTo(charge.droppedAt) < 1.4) {
       charge.holder = 'player';
       charge.droppedAt = null;
-      hud.radio('You picked up the charge.', 'helios');
+      hud.radio('You picked up the core.', 'aurora');
     }
   }
 }
@@ -446,35 +602,51 @@ function step(dt) {
     player.step(dt, input.state.keys, input.state.aiming);
     weapon.step(dt, input.state.aiming);
     bots.step(dt, elapsed, random, body, playerAlive, charge);
+    grenades.step(dt);
+    effects.step(dt);
     stepCharge(dt);
+    // Footsteps are noise: a sprinting player draws the nearest WARDEN bots.
+    if (playerAlive && elapsed - lastNoiseAt >= 0.4) {
+      lastNoiseAt = elapsed;
+      const radius = player.noiseRadius();
+      if (radius > 0) bots.hearNoise(body.position, radius, 'aurora', elapsed);
+    }
+    // Flash blindness fades out over its remaining time.
+    if (flashUntil > 0) {
+      const remaining = Math.max(0, flashUntil - elapsed);
+      hud.setFlash(remaining > 0 ? flashPeak * (remaining / (0.6 + flashPeak * 2.2)) : 0);
+      if (remaining <= 0) { flashUntil = 0; flashPeak = 0; }
+    }
     // Elimination check.
-    const umbraAlive = bots.aliveCount('umbra');
-    const heliosAlive = bots.aliveCount('helios') + (playerAlive ? 1 : 0);
-    if (umbraAlive === 0) endRound('helios', 'UMBRA squad eliminated.');
-    else if (heliosAlive === 0 && !charge.planted) endRound('umbra', 'HELIOS squad eliminated.');
-    else if (roundTimer <= 0 && !charge.planted) endRound('umbra', 'Time — UMBRA held the sites.');
+    const wardenAlive = bots.aliveCount('warden');
+    const auroraAlive = bots.aliveCount('aurora') + (playerAlive ? 1 : 0);
+    if (wardenAlive === 0) endRound('aurora', 'WARDEN squad eliminated.');
+    else if (auroraAlive === 0 && !charge.planted) endRound('warden', 'AURORA squad eliminated.');
+    else if (roundTimer <= 0 && !charge.planted) endRound('warden', 'Time — WARDEN held the sites.');
   } else if (phase === 'roundEnd') {
     weapon.step(dt, false);
     bots.step(dt, elapsed, random, body, playerAlive, charge);
+    grenades.step(dt);
+    effects.step(dt);
     if (elapsed >= roundEndAt) {
-      if (score.helios >= WIN_ROUNDS || score.umbra >= WIN_ROUNDS || round >= MAX_ROUNDS) endMatch();
+      if (score.aurora >= WIN_ROUNDS || score.warden >= WIN_ROUNDS || round >= MAX_ROUNDS) endMatch();
       else {
         round += 1;
         startBuy();
       }
     }
   }
-  // Site beacons pulse; the planted charge blinks faster as the fuse runs out.
+  // Site beacons pulse; the planted core blinks faster as the fuse runs out.
   const pulse = 0.7 + Math.sin(elapsed * 3) * 0.3;
-  world.lightA.intensity = 6 + pulse * 4;
-  world.lightB.intensity = 6 + pulse * 4;
+  world.lightA.intensity = 8 + pulse * 4;
+  world.lightB.intensity = 8 + pulse * 4;
   if (world.chargeGroup.visible) {
     const blink = charge.planted && charge.fuseLeft <= 10
       ? (Math.sin(elapsed * 14) > 0 ? 1 : 0.1)
       : (Math.sin(elapsed * 4) > 0 ? 1 : 0.2);
     world.chargeLight.material.color.setRGB(1, 0.1 * blink, 0.1 * blink);
   }
-  // Dropped charge marker follows the drop point.
+  // Dropped core marker follows the drop point.
   if (charge.droppedAt && !charge.planted) {
     world.chargeGroup.visible = true;
     world.chargeGroup.position.copy(charge.droppedAt);
@@ -482,8 +654,18 @@ function step(dt) {
   } else if (!charge.planted) {
     world.chargeGroup.visible = false;
   }
-  // Dust drifts on the wind.
-  world.dust.rotation.y = elapsed * 0.004;
+}
+
+function fallSnow(dt) {
+  const attr = world.snowfall.geometry.getAttribute('position');
+  const array = attr.array;
+  for (let i = 0; i < array.length; i += 3) {
+    array[i + 1] -= dt * (0.6 + (i % 5) * 0.12);
+    array[i] += dt * 0.25;
+    if (array[i + 1] < 0) array[i + 1] = 9;
+    if (array[i] > 25) array[i] = -25;
+  }
+  attr.needsUpdate = true;
 }
 
 function frame(now) {
@@ -496,8 +678,13 @@ function frame(now) {
     if (phase === 'live' && playerAlive) {
       if (input.state.firing && weapon.ready()) shoot(weapon.spread(player.groundSpeed(), input.state.aiming, body.crouching));
       if (input.state.keys.has('KeyR') && weapon.reload()) audio.reload();
+      if (input.takeThrow()) throwPlayerGrenade();
+      if (input.takeCycle()) cycleGrenade();
     }
-    fovTarget = input.state.aiming && phase === 'live' ? 55 : 74;
+    const aiming = input.state.aiming && phase === 'live';
+    const scoped = aiming && weapon.state.weaponId === 'sniper';
+    fovTarget = scoped ? 32 : aiming ? 55 : 74;
+    hud.setScope(scoped);
     if (Math.abs(camera.fov - fovTarget) > 0.1) {
       camera.fov += (fovTarget - camera.fov) * Math.min(1, dt * 12);
       camera.updateProjectionMatrix();
@@ -514,6 +701,7 @@ function frame(now) {
       steps += 1;
     }
     if (accumulator > FIXED_STEP * 5) accumulator = 0;
+    fallSnow(dt);
     syncCamera();
     refreshHud();
     hud.drawRadar(body, bots.bots, charge, elapsed);
@@ -542,7 +730,10 @@ hud.onDeploy(() => {
 window.addEventListener('keydown', (event) => {
   if (phase === 'buy') {
     if (event.code === 'Enter') startRound();
-    const buyKeys = { Digit1: 'pistol', Digit2: 'smg', Digit3: 'shotgun', Digit4: 'rifle', Digit5: 'sniper', Digit6: 'armor' };
+    const buyKeys = {
+      Digit1: 'pistol', Digit2: 'smg', Digit3: 'shotgun', Digit4: 'rifle', Digit5: 'sniper',
+      Digit6: 'armor', Digit7: 'grenade:he', Digit8: 'grenade:smoke', Digit9: 'grenade:flash',
+    };
     if (buyKeys[event.code]) buy(buyKeys[event.code]);
   }
   if (event.code === 'KeyB' && phase === 'buy') {
@@ -577,7 +768,7 @@ function placeBot(index, x, z) {
   const bot = bots.bots[index];
   bot.body.position.set(x, 0, z);
   bot.body.velocity.set(0, 0, 0);
-  bot.body.yaw = bot.team === 'helios' ? 0 : Math.PI;
+  bot.body.yaw = bot.team === 'aurora' ? 0 : Math.PI;
   bot.group.position.set(x, 0, z);
   bot.group.rotation.set(0, bot.body.yaw, 0);
   bot.route = [];
@@ -601,11 +792,15 @@ function paintTwiceThenReady() {
 }
 
 function runShot(name) {
-  score = { helios: name === 'end' ? 2 : name === 'play' ? 1 : 0, umbra: name === 'end' ? 1 : 0 };
+  score = { aurora: name === 'end' ? 2 : name === 'play' ? 1 : 0, warden: name === 'end' ? 1 : 0 };
   round = name === 'play' ? 2 : name === 'end' ? 3 : 1;
   money = name === 'buy' ? 2450 : name === 'play' ? 1850 : 800;
   health = name === 'play' ? 82 : 100;
   armor = name === 'play' ? 35 : name === 'buy' ? 50 : 0;
+  grenadeCounts.he = 1;
+  grenadeCounts.smoke = 1;
+  grenadeCounts.flash = 2;
+  grenadeSelected = 'smoke';
   phase = name === 'buy' ? 'buy' : 'live';
   roundTimer = name === 'play' ? 72 : ROUND_SECONDS;
   buyTimer = 9;
@@ -624,36 +819,34 @@ function runShot(name) {
   staging = true;
   if (name === 'start') {
     phase = 'menu';
-    player.reset(0, 17, 0);
+    player.reset(0, 19, 0);
     placeBot(4, 2, -4);
     placeBot(5, -3.5, -6);
     aimAt(new THREE.Vector3(0, 1.6, -8));
     settle(20);
     hud.showOverlay('start');
   } else if (name === 'buy') {
-    player.reset(-2, 15, 0);
+    player.reset(-2, 17, 0);
     placeBot(4, 2, -4);
     placeBot(5, -3.5, -6);
     aimAt(new THREE.Vector3(0, 1.6, -4));
     settle(20);
-    hud.showBuy(money, weapon.state.weaponId, armor > 0, buy);
+    hud.showBuy(money, weapon.state.weaponId, armor > 0, grenadeCounts, buy);
     hud.banner(`PLAN: ${currentPlan.name}`, currentPlan.callout, 4000);
   } else if (name === 'play') {
-    // Mid-fight at A with the charge live: two UMBRA bots staged in the open,
-    // one dropped, the fuse bar up.
-    player.reset(-8, -2, 0);
-    placeBot(4, -12, -8);
-    placeBot(5, -16, -12);
-    placeBot(6, -10, -14);
+    // Mid-fight at A with the core live: two WARDEN bots staged in the open,
+    // one dropped, a smoke cloud blooming at the A entry, the fuse bar up.
+    player.reset(-9, -3, 0);
+    placeBot(4, -13, -8);
+    placeBot(5, -17, -13);
+    placeBot(6, -11, -15);
     settle(12);
-    const point = bots.aimPoint(0);
-    for (let fired = 0; fired < 4; fired += 1) {
-      aimAt(point);
+    // Five rounds, re-aimed each time so the burst tracks a moving target.
+    for (let fired = 0; fired < 5; fired += 1) {
+      aimAt(bots.aimPoint(0));
       shoot(0);
       settle(7);
     }
-    aimAt(bots.aimPoint(0));
-    shoot(0);
     charge.planted = true;
     charge.site = 'A';
     charge.fuseLeft = 24;
@@ -661,25 +854,30 @@ function runShot(name) {
     world.chargeGroup.visible = true;
     world.chargeGroup.position.copy(world.sites.A.center);
     world.chargeGroup.position.y = 0.15;
-    hud.radio('Charge planted at A — hold the site!', 'helios');
-    hud.killfeed('You  ▸  Ash', true);
+    // A smoke grenade popped at the A entry, mid-bloom.
+    grenades.throw('smoke', new THREE.Vector3(-14, 1.5, -5), new THREE.Vector3(-0.2, -0.4, -1).normalize(), 'player');
+    settle(70);
+    hud.radio('Core planted at A — hold the site!', 'aurora');
+    // No staged killfeed line: the fight above already produced a real one,
+    // and a second entry for the same victim would read as a duplicate.
     settle(10);
   } else {
-    // end: a round just won, banner up, a fallen UMBRA bot in view.
-    player.reset(-8, -2, 0);
-    placeBot(4, -12, -8);
-    placeBot(5, -16, -12);
+    // end: a round just won, banner up, a fallen WARDEN bot in view.
+    player.reset(-9, -3, 0);
+    placeBot(4, -11, -7);
+    placeBot(5, -17, -13);
     settle(12);
-    const point = bots.aimPoint(0);
-    for (let fired = 0; fired < 4; fired += 1) {
-      aimAt(point);
+    // Six rounds, re-aimed each time: four drop the first WARDEN bot even if
+    // he sidesteps behind cover mid-burst, the rest land on the next one.
+    for (let fired = 0; fired < 6; fired += 1) {
+      aimAt(bots.aimPoint(0));
       shoot(0);
       settle(7);
     }
     settle(10);
     charge.holder = null; charge.planted = false; charge.site = null;
-    hud.banner('HELIOS WINS THE ROUND', 'The charge detonated — the site is gone.', 8000);
-    score = { helios: 2, umbra: 1 };
+    hud.banner('AURORA WINS THE ROUND', 'The core detonated — the site is gone.', 8000);
+    score = { aurora: 2, warden: 1 };
   }
   staging = false;
   refreshHud();
@@ -688,6 +886,6 @@ function runShot(name) {
 
 syncCamera();
 refreshHud();
-window.__solstice = { scene, camera, player, bots, weapon, charge };
+window.__kestrel = { scene, camera, player, bots, weapon, charge, grenades, effects };
 if (shot) runShot(shot);
 else requestAnimationFrame(frame);

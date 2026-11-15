@@ -1,36 +1,42 @@
-// SOLSTICE — the armoury. Five weapons, one table: price, damage, headshot
-// multiplier, fire rate, magazine, spread and feel. Accuracy is the skill: spread
-// grows with movement and shrinks when still, crouched or aiming down sights.
-// Damage falls off with range, so a rifle wins a lane and a shotgun wins a corner.
-// The view model is three boxes and a sight on the camera, with muzzle flash.
+// KESTREL — the armoury. Five weapons, one table: price, damage, headshot
+// multiplier, fire rate, magazine, spread and feel. Accuracy is the skill:
+// spread grows with movement and shrinks when still, crouched or aiming down
+// sights, and every shot climbs the view a little, so bursts beat spray.
+// Damage falls off with range, so a rifle wins a lane and a shotgun wins a
+// corner. The view model is boxes and a sight on the camera, with muzzle flash.
 import * as THREE from 'three';
 import { PALETTE } from './palette.js';
 
 export const WEAPONS = {
   pistol: {
-    id: 'pistol', name: 'VK-9 Sidearm', price: 0, damage: 34, headMult: 3.0,
+    id: 'pistol', name: 'P-12 Sparrow', price: 0, damage: 34, headMult: 3.0,
     fireGap: 0.16, auto: false, mag: 12, reserve: 48, reloadTime: 1.4,
     spreadStill: 0.0035, spreadMoving: 0.02, pellets: 1, range: 45, kick: 0.006,
+    climb: 0.004,
   },
   smg: {
-    id: 'smg', name: 'K-9 Jackal', price: 1250, damage: 26, headMult: 3.0,
+    id: 'smg', name: 'KV-9 Hornet', price: 1250, damage: 26, headMult: 3.0,
     fireGap: 0.082, auto: true, mag: 25, reserve: 100, reloadTime: 1.7,
     spreadStill: 0.005, spreadMoving: 0.03, pellets: 1, range: 38, kick: 0.007,
+    climb: 0.005,
   },
   shotgun: {
-    id: 'shotgun', name: 'M590 Breacher', price: 1100, damage: 13, headMult: 2.0,
+    id: 'shotgun', name: 'SG-12 Gale', price: 1100, damage: 13, headMult: 2.0,
     fireGap: 0.85, auto: false, mag: 6, reserve: 24, reloadTime: 2.4,
     spreadStill: 0.03, spreadMoving: 0.05, pellets: 7, range: 18, kick: 0.02,
+    climb: 0.016,
   },
   rifle: {
-    id: 'rifle', name: 'AR-77 Vandal', price: 2700, damage: 33, headMult: 3.0,
+    id: 'rifle', name: 'AR-90 Valkyr', price: 2700, damage: 33, headMult: 3.0,
     fireGap: 0.108, auto: true, mag: 30, reserve: 90, reloadTime: 1.9,
     spreadStill: 0.0022, spreadMoving: 0.028, pellets: 1, range: 70, kick: 0.009,
+    climb: 0.007,
   },
   sniper: {
-    id: 'sniper', name: 'LW-50 Longshot', price: 4750, damage: 95, headMult: 4.0,
+    id: 'sniper', name: 'SR-7 Halcyon', price: 4750, damage: 95, headMult: 4.0,
     fireGap: 1.35, auto: false, mag: 5, reserve: 15, reloadTime: 2.8,
-    spreadStill: 0.0004, spreadMoving: 0.06, pellets: 1, range: 90, kick: 0.03,
+    spreadStill: 0.0004, spreadMoving: 0.06, pellets: 1, range: 95, kick: 0.03,
+    climb: 0.024,
   },
 };
 
@@ -59,7 +65,10 @@ export function createWeapon(camera) {
   camera.add(model, flash, flashLight);
 
   let def = WEAPONS.rifle;
-  const state = { mag: 0, reserve: 0, cooldown: 0, reloadLeft: 0, flash: 0, kick: 0, weaponId: 'rifle' };
+  const state = {
+    mag: 0, reserve: 0, cooldown: 0, reloadLeft: 0, flash: 0, kick: 0,
+    weaponId: 'rifle', heat: 0,
+  };
 
   function rebuildModel() {
     while (model.children.length) model.remove(model.children[0]);
@@ -94,6 +103,7 @@ export function createWeapon(camera) {
     state.reloadLeft = 0;
     state.flash = 0;
     state.kick = 0;
+    state.heat = 0;
     rebuildModel();
   }
 
@@ -101,6 +111,9 @@ export function createWeapon(camera) {
     state.cooldown = Math.max(0, state.cooldown - dt);
     state.flash = Math.max(0, state.flash - dt);
     state.kick += (0 - state.kick) * Math.min(1, dt * 14);
+    // Heat is the spray penalty: it builds while firing and cools off when
+    // the trigger is released, so a disciplined burst stays accurate.
+    state.heat = Math.max(0, state.heat - dt * 2.2);
     const aimBlend = aiming ? 0.55 : 1;
     model.position.x = 0.26 * aimBlend;
     model.position.y = -0.24 + (aiming ? 0.05 : 0);
@@ -135,6 +148,7 @@ export function createWeapon(camera) {
       state.cooldown = def.fireGap;
       state.flash = 0.06;
       state.kick = 0.04 + def.kick;
+      state.heat = Math.min(1, state.heat + 0.16);
     },
     takeRound() {
       if (state.mag <= 0) return false;
@@ -148,6 +162,7 @@ export function createWeapon(camera) {
     },
     spread(speed, aiming, crouching) {
       let spread = def.spreadStill + Math.min(1, speed / 5.4) * def.spreadMoving;
+      spread *= 1 + state.heat * 1.4;
       if (aiming) spread *= 0.45;
       if (crouching) spread *= 0.8;
       return spread;
@@ -159,6 +174,7 @@ export function createWeapon(camera) {
       state.reloadLeft = 0;
       state.flash = 0;
       state.kick = 0;
+      state.heat = 0;
     },
   };
 }

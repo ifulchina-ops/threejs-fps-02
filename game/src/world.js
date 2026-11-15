@@ -1,9 +1,11 @@
-// SOLSTICE — the map: "Array Nine", an original desert solar station at golden
-// hour, 48 x 40 m. HELIOS spawns south, UMBRA north. Two bombsites: A "Reactor"
-// (the control building, west) and B "Array" (the panel field, east), joined by
-// west, mid and east lanes. Every box is a collider and a surface a bullet stops
-// on. The waypoint graph drives the bots' team plans. Plain geometry plus
-// procedural canvas textures — no models, no image files, no network.
+// KESTREL — the map: "High Observatory", an original alpine station at blue
+// hour, 52 x 44 m. AURORA spawns south, WARDEN north. Two sites: A "Dome" (the
+// telescope dome, west) and B "Array" (the dish field, east), joined by west,
+// mid and east lanes, with a flank gap on each side of mid and an elevated
+// Overlook above mid — four shallow steps up, sightlines over both sites.
+// Every box is a collider and a surface a bullet stops on. The waypoint graph
+// drives the bots' team plans. Plain geometry plus procedural canvas textures
+// — no models, no image files, no network.
 import * as THREE from 'three';
 import { PALETTE } from './palette.js';
 
@@ -11,47 +13,44 @@ const WALL_HEIGHT = 5;
 
 // Named waypoints the bots' team plans walk. Routes are lists of these keys.
 export const WAYPOINTS = {
-  heliosSpawn: [0, 17],
-  heliosWest: [-10, 14], heliosEast: [10, 14], heliosMid: [0, 12],
-  westMid: [-19, 6], westMid2: [-19, -2],
-  eastMid: [19, 6], eastMid2: [19, -2],
-  midSouth: [0, 8], mid: [0, 0], midNorth: [0, -6],
-  aEntry: [-14, -4], aSite: [-14, -11], aBack: [-20, -13], aPost1: [-10, -14], aPost2: [-18, -7],
-  bEntry: [14, -4], bSite: [14, -11], bBack: [20, -13], bPost1: [10, -14], bPost2: [18, -7],
-  umbraSpawn: [0, -17], umbraWest: [-8, -15], umbraEast: [8, -15],
+  auroraSpawn: [0, 19],
+  auroraWest: [-11, 15], auroraEast: [11, 15], auroraMid: [0, 13],
+  westMid: [-21, 7], westMid2: [-21, -2], westGap: [-13, 4],
+  eastMid: [21, 7], eastMid2: [21, -2], eastGap: [13, 4],
+  midSouth: [0, 9], mid: [0, 2], midNorth: [0, -6],
+  overlookBase: [0, 3], overlook: [0, -2],
+  aEntry: [-15, -5], aSite: [-15, -12], aBack: [-21, -15], aPost1: [-10, -15], aPost2: [-19, -7],
+  bEntry: [15, -5], bSite: [15, -12], bBack: [21, -15], bPost1: [10, -15], bPost2: [19, -7],
+  wardenSpawn: [0, -19], wardenWest: [-9, -16], wardenEast: [9, -16],
 };
 
-function groundTexture() {
+function snowTexture() {
   const canvas = document.createElement('canvas');
   canvas.width = 1024;
   canvas.height = 1024;
   const ctx = canvas.getContext('2d');
-  // Sandy concrete.
-  ctx.fillStyle = '#8a7a5e';
+  // Moonlit snow: pale blue-white with soft drifts.
+  ctx.fillStyle = '#c9d4e6';
   ctx.fillRect(0, 0, 1024, 1024);
-  for (let i = 0; i < 900; i += 1) {
-    const shade = Math.random() * 0.09;
-    ctx.fillStyle = Math.random() < 0.5 ? `rgba(0,0,0,${shade})` : `rgba(255,240,200,${shade})`;
+  for (let i = 0; i < 1100; i += 1) {
+    const shade = Math.random() * 0.08;
+    ctx.fillStyle = Math.random() < 0.5 ? `rgba(70,90,130,${shade})` : `rgba(255,255,255,${shade})`;
     ctx.beginPath();
-    ctx.arc(Math.random() * 1024, Math.random() * 1024, 3 + Math.random() * 30, 0, Math.PI * 2);
+    ctx.arc(Math.random() * 1024, Math.random() * 1024, 3 + Math.random() * 34, 0, Math.PI * 2);
     ctx.fill();
   }
-  // Slab seams.
-  ctx.strokeStyle = 'rgba(60,50,35,0.35)';
-  ctx.lineWidth = 2;
-  for (let i = 0; i <= 8; i += 1) {
-    ctx.beginPath(); ctx.moveTo(i * 128, 0); ctx.lineTo(i * 128, 1024); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(0, i * 128); ctx.lineTo(1024, i * 128); ctx.stroke();
-  }
-  // Site rings: A is west (left), B is east (right). Map x -24..24 -> 0..1024,
-  // z -20..20 -> 0..1024 (texture v runs south-to-north here).
-  const toPx = (x, z) => [(x + 24) / 48 * 1024, (z + 20) / 40 * 1024];
-  for (const [site, color] of [['A', 'rgba(255,154,46,0.75)'], ['B', 'rgba(46,211,198,0.75)']]) {
-    const [cx, cy] = toPx(site === 'A' ? -14 : 14, -11);
+  // Trampled lanes: darker packed snow along the three lanes.
+  ctx.fillStyle = 'rgba(90,105,140,0.16)';
+  for (const x of [120, 512, 904]) ctx.fillRect(x - 46, 0, 92, 1024);
+  // Site rings: A is west (left), B is east (right). Map x -26..26 -> 0..1024,
+  // z -22..22 -> 0..1024 (texture v runs south-to-north here).
+  const toPx = (x, z) => [(x + 26) / 52 * 1024, (z + 22) / 44 * 1024];
+  for (const [site, color] of [['A', 'rgba(255,154,46,0.8)'], ['B', 'rgba(79,216,232,0.8)']]) {
+    const [cx, cy] = toPx(site === 'A' ? -15 : 15, -12);
     ctx.strokeStyle = color;
     ctx.lineWidth = 6;
     ctx.setLineDash([22, 14]);
-    ctx.beginPath(); ctx.arc(cx, cy, 85, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx, cy, 82, 0, Math.PI * 2); ctx.stroke();
     ctx.setLineDash([]);
     ctx.fillStyle = color;
     ctx.font = 'bold 64px system-ui, sans-serif';
@@ -75,7 +74,7 @@ function letterTexture(letter, color) {
   canvas.width = 128;
   canvas.height = 128;
   const ctx = canvas.getContext('2d');
-  ctx.fillStyle = 'rgba(20,18,14,0.85)';
+  ctx.fillStyle = 'rgba(16,20,32,0.9)';
   ctx.fillRect(0, 0, 128, 128);
   ctx.strokeStyle = color;
   ctx.lineWidth = 6;
@@ -104,7 +103,10 @@ export function createWorld(scene) {
       emissiveIntensity: name === 'charge' ? 0.4 : 0,
     });
   }
-  const groundMat = new THREE.MeshStandardMaterial({ map: groundTexture(), roughness: 0.95, metalness: 0.02 });
+  const groundMat = new THREE.MeshStandardMaterial({ map: snowTexture(), roughness: 0.95, metalness: 0.02 });
+  const windowMat = new THREE.MeshStandardMaterial({
+    color: new THREE.Color('#ffd27a'), emissive: new THREE.Color('#ff9a2e'), emissiveIntensity: 1.1,
+  });
 
   const colliders = [];
   const shootables = [];
@@ -120,100 +122,121 @@ export function createWorld(scene) {
     return mesh;
   }
 
-  // Floor and perimeter walls (48 x 40 m, open to the golden sky).
-  const floor = new THREE.Mesh(new THREE.BoxGeometry(48.4, 0.4, 40.4), groundMat);
+  // Floor and perimeter walls (52 x 44 m, open to the night sky).
+  const floor = new THREE.Mesh(new THREE.BoxGeometry(52.4, 0.4, 44.4), groundMat);
   floor.position.set(0, -0.2, 0);
   floor.receiveShadow = true;
   group.add(floor);
   colliders.push(new THREE.Box3().setFromObject(floor));
   shootables.push(floor);
-  box(0.6, WALL_HEIGHT, 40.4, -24.2, WALL_HEIGHT / 2, 0, 'concrete');
-  box(0.6, WALL_HEIGHT, 40.4, 24.2, WALL_HEIGHT / 2, 0, 'concrete');
-  box(48.4, WALL_HEIGHT, 0.6, 0, WALL_HEIGHT / 2, -20.2, 'concrete');
-  box(48.4, WALL_HEIGHT, 0.6, 0, WALL_HEIGHT / 2, 20.2, 'concrete');
+  box(0.6, WALL_HEIGHT, 44.4, -26.2, WALL_HEIGHT / 2, 0, 'concrete');
+  box(0.6, WALL_HEIGHT, 44.4, 26.2, WALL_HEIGHT / 2, 0, 'concrete');
+  box(52.4, WALL_HEIGHT, 0.6, 0, WALL_HEIGHT / 2, -22.2, 'concrete');
+  box(52.4, WALL_HEIGHT, 0.6, 0, WALL_HEIGHT / 2, 22.2, 'concrete');
 
-  // ---- Site A "Reactor": control building + dome + cooling tower ----
-  box(8, 3.6, 5, -17.5, 1.8, -14.5, 'concrete');
-  const windowMat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#ffd27a'), emissive: new THREE.Color('#ff9a2e'), emissiveIntensity: 0.9 });
-  const windows = new THREE.Mesh(new THREE.BoxGeometry(7.4, 0.9, 0.1), windowMat);
-  windows.position.set(-17.5, 2.5, -11.95);
-  group.add(windows);
-  const dome = new THREE.Mesh(new THREE.SphereGeometry(2.6, 24, 16, 0, Math.PI * 2, 0, Math.PI / 2), materials.steel);
-  dome.position.set(-10.5, 0, -14.5);
+  // ---- Site A "Dome": telescope dome + control building ----
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(3.4, 28, 18, 0, Math.PI * 2, 0, Math.PI / 2), materials.dome);
+  dome.position.set(-19.5, 0, -15.5);
   dome.castShadow = true;
   dome.receiveShadow = true;
   group.add(dome);
   colliders.push(new THREE.Box3().setFromObject(dome));
   shootables.push(dome);
-  const tower = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 2.4, 7, 20), materials.concrete);
-  tower.position.set(-21.5, 3.5, -17.5);
-  tower.castShadow = true;
-  group.add(tower);
-  colliders.push(new THREE.Box3().setFromObject(tower));
-  shootables.push(tower);
+  // The dome slit: a dark slot the telescope peers through.
+  const slit = new THREE.Mesh(new THREE.BoxGeometry(0.9, 2.6, 0.3), materials.surface);
+  slit.position.set(-19.5, 1.9, -12.6);
+  slit.rotation.x = -0.5;
+  group.add(slit);
+  box(7, 3.4, 5, -12.5, 1.7, -16.5, 'concrete');
+  const windowsA = new THREE.Mesh(new THREE.BoxGeometry(6.4, 0.9, 0.1), windowMat);
+  windowsA.position.set(-12.5, 2.4, -13.95);
+  group.add(windowsA);
+  const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.14, 6, 8), materials.steel);
+  mast.position.set(-23.5, 3, -19.5);
+  mast.castShadow = true;
+  group.add(mast);
+  const beacon = new THREE.Mesh(
+    new THREE.SphereGeometry(0.16, 10, 8),
+    new THREE.MeshBasicMaterial({ color: new THREE.Color('#ff5252') }),
+  );
+  beacon.position.set(-23.5, 6.1, -19.5);
+  group.add(beacon);
 
-  // ---- Site B "Array": solar panel field ----
-  function panel(x, z, rotationY) {
+  // ---- Site B "Array": dish antenna field ----
+  function dish(x, z, rotationY) {
     const frame = new THREE.Group();
-    const slab = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.12, 2.2), materials.panel);
-    slab.castShadow = true;
-    slab.receiveShadow = true;
-    frame.add(slab);
-    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.18, 1.1, 0.18), materials.steel);
-    leg.position.set(0, -0.55, 0);
-    frame.add(leg);
-    const leg2 = leg.clone();
-    leg2.position.x = 1.4;
-    frame.add(leg2);
-    const leg3 = leg.clone();
-    leg3.position.x = -1.4;
-    frame.add(leg3);
-    frame.position.set(x, 1.15, z);
-    frame.rotation.x = -0.42;
+    const bowl = new THREE.Mesh(
+      new THREE.SphereGeometry(1.7, 20, 10, 0, Math.PI * 2, 0, 0.62),
+      materials.panel,
+    );
+    bowl.rotation.x = Math.PI - 0.9;
+    bowl.castShadow = true;
+    bowl.receiveShadow = true;
+    frame.add(bowl);
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.18, 1.6, 8), materials.steel);
+    pole.position.y = -0.8;
+    frame.add(pole);
+    const hub = new THREE.Mesh(new THREE.SphereGeometry(0.22, 10, 8), materials.steel);
+    hub.position.set(0, 0.9, 0.7);
+    frame.add(hub);
+    frame.position.set(x, 1.7, z);
     frame.rotation.y = rotationY;
     group.add(frame);
     const bounds = new THREE.Box3().setFromObject(frame);
     colliders.push(bounds);
-    shootables.push(slab);
+    shootables.push(bowl);
     return frame;
   }
-  panel(11, -8, 0.2); panel(17, -8, -0.2); panel(11, -14.5, 0.2); panel(17, -14.5, -0.2);
-  panel(-6, 9, 0.15); panel(6, 9, -0.15); panel(-6, 13.5, 0.15); panel(6, 13.5, -0.15);
-  // Transformer boxes near B.
-  box(1.8, 1.4, 1.2, 20.5, 0.7, -5, 'rust');
-  box(1.8, 1.4, 1.2, 20.5, 0.7, -8, 'steel');
+  dish(11.5, -8.5, 0.4); dish(18.5, -8.5, -0.3); dish(11.5, -15.5, 0.3); dish(18.5, -15.5, -0.4);
+  box(1.8, 1.4, 1.2, 22.5, 0.7, -5, 'rust');
+  box(1.8, 1.4, 1.2, 22.5, 0.7, -8, 'steel');
+  box(7, 3.4, 5, 12.5, 1.7, -18.5, 'concrete');
+  const windowsB = new THREE.Mesh(new THREE.BoxGeometry(6.4, 0.9, 0.1), windowMat);
+  windowsB.position.set(12.5, 2.4, -15.95);
+  group.add(windowsB);
 
-  // ---- Mid "Conduit": an overhead pipe run + cover crates ----
-  const pipe = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 40, 12), materials.steel);
-  pipe.rotation.x = Math.PI / 2;
-  pipe.position.set(0, 4.4, 0);
-  pipe.castShadow = true;
-  group.add(pipe);
-  box(0.8, 4.4, 0.8, -3.4, 2.2, -6, 'steel');
-  box(0.8, 4.4, 0.8, 3.4, 2.2, 6, 'steel');
-  box(1.6, 1.1, 1.6, -4.5, 0.55, -2, 'rust');
-  box(1.6, 1.1, 1.6, 4.5, 0.55, 2, 'rust');
-  box(1.6, 1.1, 1.6, -4.5, 0.55, 3.5, 'sand');
-  box(1.6, 1.1, 1.6, 4.5, 0.55, -3.5, 'sand');
+  // ---- Mid "Overlook": a raised platform with sightlines over both sites.
+  // Four shallow steps (0.28 m each) climb its south face; the platform top
+  // sits at 1.12 m with a low parapet for cover.
+  const steps = [
+    { h: 0.28, z: 3.4 }, { h: 0.56, z: 2.7 }, { h: 0.84, z: 2.0 }, { h: 1.12, z: 1.3 },
+  ];
+  for (const step of steps) box(2.2, step.h, 0.75, 0, step.h / 2, step.z, 'concrete');
+  box(6, 0.24, 4.4, 0, 1.0, -1.4, 'concrete');
+  box(6, 0.9, 0.3, 0, 1.57, -3.45, 'concrete');
+  box(0.3, 0.9, 4.4, -2.85, 1.57, -1.4, 'concrete');
+  box(0.3, 0.9, 4.4, 2.85, 1.57, -1.4, 'concrete');
+  // Overhead cable run down mid, on two pylons.
+  const cable = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 44, 8), materials.steel);
+  cable.rotation.x = Math.PI / 2;
+  cable.position.set(0, 4.6, 0);
+  group.add(cable);
+  box(0.5, 4.6, 0.5, -4.2, 2.3, -8, 'steel');
+  box(0.5, 4.6, 0.5, 4.2, 2.3, 8, 'steel');
 
   // Lane cover: crates, barriers and pillars along west / east / mid.
-  box(1.6, 1.1, 1.6, -19, 0.55, 10, 'rust');
-  box(1.6, 1.1, 1.6, -16.5, 0.55, 2, 'sand');
-  box(1.6, 1.1, 1.6, -21, 0.55, -6, 'sand');
-  box(1.6, 1.1, 1.6, 19, 0.55, 10, 'rust');
-  box(1.6, 1.1, 1.6, 16.5, 0.55, 2, 'sand');
-  box(1.6, 1.1, 1.6, 21, 0.55, -6, 'sand');
+  box(1.6, 1.1, 1.6, -21, 0.55, 11, 'rust');
+  box(1.6, 1.1, 1.6, -18.5, 0.55, 2, 'snow');
+  box(1.6, 1.1, 1.6, -23, 0.55, -6, 'snow');
+  box(1.6, 1.1, 1.6, 21, 0.55, 11, 'rust');
+  box(1.6, 1.1, 1.6, 18.5, 0.55, 2, 'snow');
+  box(1.6, 1.1, 1.6, 23, 0.55, -6, 'snow');
   box(1.2, 3.2, 1.2, -9, 1.6, 0, 'concrete');
   box(1.2, 3.2, 1.2, 9, 1.6, 0, 'concrete');
-  box(3.4, 1.0, 1.2, -14, 0.5, 6, 'concrete');
-  box(3.4, 1.0, 1.2, 14, 0.5, 6, 'concrete');
+  box(3.4, 1.0, 1.2, -15, 0.5, 7, 'concrete');
+  box(3.4, 1.0, 1.2, 15, 0.5, 7, 'concrete');
+  box(1.6, 1.1, 1.6, -5, 0.55, -3, 'rust');
+  box(1.6, 1.1, 1.6, 5, 0.55, -3, 'rust');
+  // Flank-gap cover: low snow walls at the mid gaps.
+  box(2.6, 1.0, 0.6, -11, 0.5, 4.5, 'snow');
+  box(2.6, 1.0, 0.6, 11, 0.5, 4.5, 'snow');
   // Spawn cover.
-  box(4.2, 1.0, 1.0, -8, 0.5, 17.5, 'concrete');
-  box(4.2, 1.0, 1.0, 8, 0.5, 17.5, 'concrete');
-  box(4.2, 1.0, 1.0, -8, 0.5, -17.5, 'concrete');
-  box(4.2, 1.0, 1.0, 8, 0.5, -17.5, 'concrete');
+  box(4.2, 1.0, 1.0, -8, 0.5, 19.5, 'concrete');
+  box(4.2, 1.0, 1.0, 8, 0.5, 19.5, 'concrete');
+  box(4.2, 1.0, 1.0, -8, 0.5, -19.5, 'concrete');
+  box(4.2, 1.0, 1.0, 8, 0.5, -19.5, 'concrete');
   // Barrels.
-  for (const [x, z] of [[-22, 14], [22, 14], [-22, -10], [22, -16], [-12, -17], [12, -17]]) {
+  for (const [x, z] of [[-24, 15], [24, 15], [-24, -10], [24, -17], [-12, -19], [12, -19]]) {
     const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 1.1, 14), materials.rust);
     barrel.position.set(x, 0.55, z);
     barrel.castShadow = true;
@@ -236,16 +259,16 @@ export function createWorld(scene) {
     group.add(post);
     return board;
   }
-  const boardA = siteBoard('A', -14, -11, '#ff9a2e');
-  const boardB = siteBoard('B', 14, -11, '#2ed3c6');
-  const lightA = new THREE.PointLight(new THREE.Color(PALETTE.helios), 8, 14);
-  lightA.position.set(-14, 3.5, -11);
+  const boardA = siteBoard('A', -15, -12, '#ff9a2e');
+  const boardB = siteBoard('B', 15, -12, '#4fd8e8');
+  const lightA = new THREE.PointLight(new THREE.Color(PALETTE.aurora), 10, 16);
+  lightA.position.set(-15, 3.5, -12);
   scene.add(lightA);
-  const lightB = new THREE.PointLight(new THREE.Color(PALETTE.umbra), 8, 14);
-  lightB.position.set(14, 3.5, -11);
+  const lightB = new THREE.PointLight(new THREE.Color(PALETTE.warden), 10, 16);
+  lightB.position.set(15, 3.5, -12);
   scene.add(lightB);
 
-  // The planted charge: a small blinking device, hidden until a plant happens.
+  // The planted core: a small blinking device, hidden until a plant happens.
   const chargeGroup = new THREE.Group();
   const chargeBody = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.28, 0.36), materials.charge);
   chargeBody.castShadow = true;
@@ -258,36 +281,48 @@ export function createWorld(scene) {
   chargeGroup.visible = false;
   scene.add(chargeGroup);
 
-  // Dust motes drifting in the golden light.
-  const dustCount = 220;
-  const dustPositions = new Float32Array(dustCount * 3);
-  for (let i = 0; i < dustCount; i += 1) {
-    dustPositions[i * 3] = (Math.random() - 0.5) * 46;
-    dustPositions[i * 3 + 1] = 0.3 + Math.random() * 4.5;
-    dustPositions[i * 3 + 2] = (Math.random() - 0.5) * 38;
+  // Stars overhead, and snowfall drifting down (main.js animates the fall).
+  const starCount = 320;
+  const starPositions = new Float32Array(starCount * 3);
+  for (let i = 0; i < starCount; i += 1) {
+    starPositions[i * 3] = (Math.random() - 0.5) * 160;
+    starPositions[i * 3 + 1] = 24 + Math.random() * 50;
+    starPositions[i * 3 + 2] = (Math.random() - 0.5) * 160;
   }
-  const dustGeo = new THREE.BufferGeometry();
-  dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPositions, 3));
-  const dust = new THREE.Points(dustGeo, new THREE.PointsMaterial({ color: 0xffd9a0, size: 0.06, transparent: true, opacity: 0.55 }));
-  scene.add(dust);
+  const starGeo = new THREE.BufferGeometry();
+  starGeo.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
+  const stars = new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xdfe8ff, size: 0.35, sizeAttenuation: true, transparent: true, opacity: 0.9, fog: false }));
+  scene.add(stars);
 
-  // Light: a low golden sun from the west, warm hemisphere, cool fill.
-  const sky = new THREE.HemisphereLight(new THREE.Color('#ffd9a0'), new THREE.Color('#5c4a33'), 1.4);
+  const flakeCount = 260;
+  const flakePositions = new Float32Array(flakeCount * 3);
+  for (let i = 0; i < flakeCount; i += 1) {
+    flakePositions[i * 3] = (Math.random() - 0.5) * 50;
+    flakePositions[i * 3 + 1] = Math.random() * 9;
+    flakePositions[i * 3 + 2] = (Math.random() - 0.5) * 42;
+  }
+  const flakeGeo = new THREE.BufferGeometry();
+  flakeGeo.setAttribute('position', new THREE.BufferAttribute(flakePositions, 3));
+  const snowfall = new THREE.Points(flakeGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 0.09, transparent: true, opacity: 0.7 }));
+  scene.add(snowfall);
+
+  // Light: cold moonlight from the north-east, cool hemisphere, warm site glow.
+  const sky = new THREE.HemisphereLight(new THREE.Color('#7d9cc8'), new THREE.Color('#2a3348'), 1.1);
   scene.add(sky);
-  const sun = new THREE.DirectionalLight(new THREE.Color('#ffb35c'), 3.2);
-  sun.position.set(-20, 13, 10);
-  sun.target.position.set(4, 0, -2);
-  sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
-  sun.shadow.camera.left = -30;
-  sun.shadow.camera.right = 30;
-  sun.shadow.camera.top = 26;
-  sun.shadow.camera.bottom = -26;
-  sun.shadow.camera.far = 80;
-  sun.shadow.bias = -0.0006;
-  scene.add(sun, sun.target);
-  const fill = new THREE.DirectionalLight(new THREE.Color('#7fa0c8'), 0.6);
-  fill.position.set(16, 12, -14);
+  const moon = new THREE.DirectionalLight(new THREE.Color('#9db8e8'), 2.4);
+  moon.position.set(18, 20, -14);
+  moon.target.position.set(-4, 0, 2);
+  moon.castShadow = true;
+  moon.shadow.mapSize.set(2048, 2048);
+  moon.shadow.camera.left = -32;
+  moon.shadow.camera.right = 32;
+  moon.shadow.camera.top = 28;
+  moon.shadow.camera.bottom = -28;
+  moon.shadow.camera.far = 90;
+  moon.shadow.bias = -0.0006;
+  scene.add(moon, moon.target);
+  const fill = new THREE.DirectionalLight(new THREE.Color('#ff9a2e'), 0.35);
+  fill.position.set(-14, 10, 16);
   scene.add(fill);
 
   return {
@@ -300,12 +335,12 @@ export function createWorld(scene) {
     lightB,
     chargeGroup,
     chargeLight,
-    dust,
+    snowfall,
     sites: {
-      A: { center: new THREE.Vector3(-14, 0, -11), radius: 4.2 },
-      B: { center: new THREE.Vector3(14, 0, -11), radius: 4.2 },
+      A: { center: new THREE.Vector3(-15, 0, -12), radius: 4.2 },
+      B: { center: new THREE.Vector3(15, 0, -12), radius: 4.2 },
     },
-    heliosSpawn: new THREE.Vector3(0, 0, 17),
-    umbraSpawn: new THREE.Vector3(0, 0, -17),
+    auroraSpawn: new THREE.Vector3(0, 0, 19),
+    wardenSpawn: new THREE.Vector3(0, 0, -19),
   };
 }
